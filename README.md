@@ -1,63 +1,126 @@
 # AI 同声传译助手
 
-把**单向音频流**(看英文演讲 / 技术分享 / 国际会议 / 网课时电脑播放的声音)实时翻译成**中文字幕**,并具备**自动修正**能力——后文出现后能回头纠正之前识别或翻译的错误。
+实时语音识别 + LLM 翻译 + 自动修正 + 声音克隆，支持英中双向同声传译。
 
-> 本仓库是可运行的第一版骨架(MVP)。默认 **mock 模式**,无需任何 API key 即可启动,用脚本化数据真实演示"识别修正 + 翻译修正"的字幕效果。
+## 功能特性
+
+- **实时语音识别**：麦克风收音 → 服务端 Whisper ASR（SiliconFlow / Groq / OpenAI）
+- **双向翻译**：EN → 中文 / 中文 → EN，一键切换
+- **自动修正**：LLM 滑动窗口上下文翻译，后文消歧后自动回改前句译文
+- **声音克隆 TTS**：自动采集说话者前 5 秒语音，通过 CosyVoice 克隆声音进行语音播报
+- **双栏字幕**：原文 + 译文实时显示，已定稿 / 临时 / 已修正 三态标记
+- **音频频谱**：实时可视化音频输入波形
+- **文件翻译**：支持上传音视频文件离线翻译
 
 ## 快速开始
 
 ```bash
 cd server
 npm install
+
+# 配置环境变量
+cp .env.example .env
+# 编辑 .env，填入 API Key
+
 npm start
 # 浏览器打开 http://localhost:8787
 ```
 
-页面上两个按钮:
+## 环境变量配置
 
-- **⚡ 跑演示**:不需要共享音频,直接观看双栏字幕的"修正"效果(推荐先看这个)。
-- **▶ 开始**:弹出"共享标签页/屏幕"对话框,**务必勾选"共享音频"**,即可捕获系统播放的真实声音(走 `getDisplayMedia`)。
+在 `server/.env` 中配置：
+
+```bash
+# 翻译 LLM（必填）
+MT_PROVIDER=deepseek          # deepseek / qwen / kimi / zhipu / openai
+LLM_API_KEY=sk-xxx
+
+# ASR 语音识别（推荐配置，否则降级为浏览器 Web Speech API）
+ASR_PROVIDER=siliconflow      # siliconflow / groq / openai
+ASR_API_KEY=xxx
+
+# TTS 语音合成（可选，不配则用浏览器自带语音）
+TTS_PROVIDER=siliconflow      # siliconflow / openai
+TTS_API_KEY=xxx
+```
+
+### API Key 获取
+
+| 服务 | 用途 | 注册地址 |
+|------|------|---------|
+| DeepSeek | LLM 翻译 | https://platform.deepseek.com |
+| SiliconFlow | ASR + TTS（含声音克隆） | https://siliconflow.cn |
+| Groq | ASR（备选，免费快速） | https://console.groq.com |
+| 通义千问 | LLM 翻译（备选） | https://dashscope.console.aliyun.com |
 
 ## 架构
 
 ```
-浏览器 getDisplayMedia(捕获系统声音)
-   │  降采样为 16kHz PCM,经 WebSocket 上送
-   ▼
-流式 ASR(interim/final 双层假设)            providers.js
-   │
-LocalAgreement-2 提交策略(连续两轮一致才定稿)  commit.js
-   │
-RollingTranslator(LLM 翻译 + 滚动上下文回改前句) providers.js
-   │  WebSocket 推回
-   ▼
-双栏字幕:已定稿(白) / 临时(灰) / 已修正(黄闪)  web/app.js
+浏览器麦克风 ──PCM 16kHz──▶ WebSocket ──▶ Node.js 服务端
+                                              │
+                              ┌────────────────┤
+                              ▼                ▼
+                     StreamingASR         语音样本采集
+                   (Whisper API)         (前5秒→声音克隆)
+                              │
+                              ▼
+                    RollingTranslator
+                  (DeepSeek LLM 翻译)
+                   4句滑动窗口上下文
+                   自动修正前句译文
+                              │
+                    ┌─────────┴─────────┐
+                    ▼                   ▼
+              WebSocket 推送        CosyVoice TTS
+            双栏字幕 + 修正标记     声音克隆语音播报
 ```
 
-## 自动修正机制(本项目核心)
+## 自动修正机制
 
-| 层级 | 机制 | 代码位置 |
-|------|------|----------|
-| ASR 识别修正 | interim 假设不断刷新,如 `a tension → attention` | `providers.js` MOCK_SCRIPT |
-| 提交稳定性 | LocalAgreement-2:连续两轮假设一致的词才定稿,避免字幕乱跳 | `commit.js` |
-| 翻译回改 | LLM 带前文上下文翻译,后文消歧后回头修正前一句译文 | `providers.js` RollingTranslator + `correction` 消息 |
+| 层级 | 机制 | 说明 |
+|------|------|------|
+| ASR 识别 | interim → final | 流式识别不断更新，静音后输出最终结果 |
+| 翻译回改 | LLM 滑动窗口 | 翻译新句时带前 4 句上下文，LLM 判断是否需要修正前句译文 |
+| 字幕展示 | 三态标记 | 白色=已定稿，灰色=临时，黄色闪烁=已修正 |
 
-## 切换到真实服务(云端 / 本地)
+## 声音克隆
 
-接口已抽象在 `server/providers.js`,通过环境变量切换:
+启用服务端 TTS 后（配置 `TTS_API_KEY`），系统会：
 
-```bash
-# 云端示例
-ASR_PROVIDER=deepgram DEEPGRAM_API_KEY=xxx \
-MT_PROVIDER=openai    OPENAI_API_KEY=xxx   npm start
+1. 自动采集麦克风前 5 秒音频作为参考样本
+2. 将参考音频发送至服务端
+3. 后续 TTS 使用 CosyVoice 声音克隆 API，以说话者声音播报译文
+4. 克隆失败时自动降级为预设语音
+
+## 技术栈
+
+- **后端**：Node.js + WebSocket (`ws`)
+- **前端**：原生 HTML/CSS/JS，黑白简约主题
+- **ASR**：SiliconFlow SenseVoice / Groq Whisper / OpenAI Whisper
+- **翻译**：DeepSeek / 通义千问 / Kimi / 智谱 / OpenAI（兼容 OpenAI Chat API 格式）
+- **TTS**：SiliconFlow CosyVoice（支持声音克隆） / OpenAI TTS / 浏览器 speechSynthesis
+
+## 项目结构
+
+```
+├── server/
+│   ├── server.js         # HTTP + WebSocket 服务，会话管理
+│   ├── asr.js            # 流式 ASR（PCM→WAV→Whisper API）
+│   ├── providers.js      # LLM 翻译 + 滑动窗口修正
+│   ├── tts.js            # TTS 语音合成 + 声音克隆
+│   ├── commit.js         # LocalAgreement-2 提交策略
+│   └── .env              # 环境变量配置（不提交）
+├── web/
+│   ├── index.html        # 页面结构
+│   ├── app.js            # 前端逻辑（音频采集、WebSocket、字幕渲染）
+│   └── style.css         # 黑白简约主题样式
+└── .env.example          # 环境变量模板
 ```
 
-- **ASR**:`createMockASR` 同形状替换为 Deepgram/Gladia 的流式 WebSocket;`pushAudio()` 已接好浏览器送来的 16kHz PCM。
-- **翻译**:`translateOpenAI` 已留好 prompt 设计位置——把前文上下文一起喂给模型,要求在 `corrections` 字段返回对前句译文的修正。
-- **本地自托管**:ASR 换 `whisper_streaming`(内置 LocalAgreement),翻译换 Hunyuan MT,均不改上层编排。
+## 使用说明
 
-## 下一步可扩展
-
-- 流式 TTS 中文配音(题目里的"语音形式")。
-- VAD 断句 + 标点恢复,提升长音频可读性。
-- 术语表 / 领域提示词,提升专业内容翻译准确度。
+1. 点击「开始」按钮，允许浏览器访问麦克风
+2. 点击语言切换按钮（EN → 中文）可切换翻译方向
+3. 点击「语音」按钮开启 TTS 语音播报
+4. 支持上传音视频文件进行离线翻译
+5. 字幕区域自动滚动，修正的译文会黄色高亮并标记「已修正」
