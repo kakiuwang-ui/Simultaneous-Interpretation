@@ -168,6 +168,7 @@ LLM Prompt 要求以 JSON 格式返回 `{ target, corrections }` ，corrections 
 | `asr_interim` | `id`, `text` | 浏览器 ASR 临时结果 |
 | `asr_final` | `id`, `text` | 浏览器 ASR 最终结果 |
 | `voice_sample` | `sampleRate`, `samples` | 声音克隆参考（后跟二进制 PCM） |
+| `retranslate` | `id`, `text` | 用户编辑原文后重新翻译 |
 | `file_done` | - | 文件音频传输完成 |
 | (binary) | - | PCM16 音频数据 / 语音样本数据 |
 
@@ -177,7 +178,7 @@ LLM Prompt 要求以 JSON 格式返回 `{ target, corrections }` ，corrections 
 |------|------|------|
 | `ready` | `mode`, `asrMode`, `ttsMode` | 会话就绪 |
 | `asr_partial` | `id`, `committed`, `pending` | ASR 临时识别结果 |
-| `asr_final` | `id`, `text` | ASR 最终识别结果 |
+| `asr_final` | `id`, `text`, `startTime`, `endTime` | ASR 最终识别结果（含时间戳） |
 | `translation` | `id`, `source`, `target` | 翻译结果 |
 | `correction` | `id`, `target` | 译文修正 |
 | `tts_audio` | `id`, `format`, `size` | TTS 音频即将发送（后跟二进制 mp3） |
@@ -224,6 +225,29 @@ LLM Prompt 要求以 JSON 格式返回 `{ target, corrections }` ，corrections 
 - 服务端用 `child_process.spawn('ffmpeg', ...)` 转码，输出管道直接读取
 - 临时文件用完即删，避免磁盘占用
 - 视频文件上传后前端用 `URL.createObjectURL` 创建预览播放器
+
+### 6.6 原文编辑与重新翻译
+
+- 双击原文行进入编辑模式，显示 inline `<input>` 输入框
+- 按 Enter 确认、Escape 取消、失焦自动保存
+- 编辑后发送 `retranslate` 消息到服务端，更新翻译历史并重新翻译
+- 清空原文则删除该行（原文 + 译文同时删除）
+
+### 6.7 字幕轮播与视频同步
+
+**实时模式（麦克风）**：
+- 轮播显示：只显示当前最新一句，旧的自动隐藏
+- 隐藏行使用 `position: absolute; visibility: hidden` 避免布局跳动
+
+**文件模式（上传处理中）**：
+- 传统滚动列表，所有字幕可见，自动滚到底部
+- 使用 `scroll-mode` CSS 类切换为 `overflow-y: auto`
+
+**视频播放模式（处理完后播放）**：
+- 播放时自动切换为轮播，已过字幕隐藏，当前及未来字幕可见
+- ASR 输出时间戳（`processedSamples / 16000`），用于字幕与视频对齐
+- 段间隙时保持显示最近的已播完段，避免字幕消失
+- 暂停时恢复所有字幕可见，方便浏览和编辑
 
 ---
 
