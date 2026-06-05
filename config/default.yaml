@@ -1,0 +1,42 @@
+asr:
+  provider: deepgram
+  deepgram:
+    model: nova-3
+    language: en
+    interim_results: true
+    endpointing: 800
+  whisper:
+    model_size: large-v3
+    device: auto
+
+translation:
+  provider: deepl
+  target_language: zh
+  deepl:
+    formality: default
+  correction:
+    enabled: true
+    provider: claude
+    model: claude-sonnet-4-20250514
+    window_size: 5
+
+tts:
+  enabled: false
+  provider: openai
+  openai:
+    model: tts-1
+    voice: alloy
+    speed: 1.0
+    response_format: pcm
+
+pipeline:
+  chunk_min_chars: 10
+  chunk_max_chars: 100
+  silence_threshold_ms: 800
+  context_window: 5
+
+audio:
+  input_device: default
+  sample_rate: 16000
+  channels: 1
+  chunk_duration_ms: 100

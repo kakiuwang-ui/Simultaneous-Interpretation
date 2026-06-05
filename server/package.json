@@ -1,0 +1,14 @@
+{
+  "name": "ai-interpreter-server",
+  "version": "0.1.0",
+  "description": "AI 同声传译助手 - 后端编排 (流式 ASR -> 提交策略 -> LLM 翻译/修正)",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "ws": "^8.18.0"
+  }
+}
