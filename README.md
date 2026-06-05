@@ -4,15 +4,23 @@
 
 ## 功能特性
 
-- **实时语音识别**：麦克风收音 → 服务端 Whisper ASR（SiliconFlow / Groq / OpenAI）
+- **实时语音识别**：麦克风收音 → 服务端 Whisper ASR（SiliconFlow SenseVoice，自动语言检测）
 - **双向翻译**：EN → 中文 / 中文 → EN，一键切换
 - **自动修正**：LLM 滑动窗口上下文翻译，后文消歧后自动回改前句译文
 - **声音克隆 TTS**：自动采集说话者前 5 秒语音，通过 CosyVoice 克隆声音进行语音播报
 - **双栏字幕**：原文 + 译文实时显示，已定稿 / 临时 / 已修正 三态标记
 - **音频频谱**：实时可视化音频输入波形
-- **文件翻译**：支持上传音视频文件离线翻译
+- **文件翻译**：支持上传任意格式音视频文件（服务端 ffmpeg 转码）
+- **视频预览**：上传视频文件后自动显示视频播放器
 
 ## 快速开始
+
+### 前置依赖
+
+- Node.js 18+
+- ffmpeg（`brew install ffmpeg`）
+
+### 安装运行
 
 ```bash
 cd server
@@ -46,33 +54,34 @@ TTS_API_KEY=xxx
 
 ### API Key 获取
 
-| 服务 | 用途 | 注册地址 |
-|------|------|---------|
-| DeepSeek | LLM 翻译 | https://platform.deepseek.com |
-| SiliconFlow | ASR + TTS（含声音克隆） | https://siliconflow.cn |
-| Groq | ASR（备选，免费快速） | https://console.groq.com |
-| 通义千问 | LLM 翻译（备选） | https://dashscope.console.aliyun.com |
+| 服务 | 用途 | 注册地址 | 费用 |
+|------|------|---------|------|
+| DeepSeek | LLM 翻译 | https://platform.deepseek.com | 按量付费 |
+| SiliconFlow | ASR + TTS（含声音克隆） | https://cloud.siliconflow.cn | ASR 免费 |
+| Groq | ASR（备选，免费快速） | https://console.groq.com | 免费 |
+| 通义千问 | LLM 翻译（备选） | https://dashscope.console.aliyun.com | 按量付费 |
 
 ## 架构
 
 ```
-浏览器麦克风 ──PCM 16kHz──▶ WebSocket ──▶ Node.js 服务端
-                                              │
-                              ┌────────────────┤
-                              ▼                ▼
-                     StreamingASR         语音样本采集
-                   (Whisper API)         (前5秒→声音克隆)
-                              │
-                              ▼
-                    RollingTranslator
-                  (DeepSeek LLM 翻译)
-                   4句滑动窗口上下文
-                   自动修正前句译文
-                              │
-                    ┌─────────┴─────────┐
-                    ▼                   ▼
-              WebSocket 推送        CosyVoice TTS
-            双栏字幕 + 修正标记     声音克隆语音播报
+浏览器麦克风 / 上传文件
+  │
+  │  麦克风: getUserMedia → 16kHz PCM16 → WebSocket
+  │  文件:   POST /upload → ffmpeg 转码 → PCM16 → WebSocket
+  │
+  ▼
+Node.js 服务端
+  │
+  ├──▶ StreamingASR (Whisper API)
+  │      5秒分段 + 0.5秒重叠 + 自动语言检测
+  │
+  ├──▶ RollingTranslator (DeepSeek LLM)
+  │      4句滑动窗口 + 自动修正前句
+  │
+  ├──▶ CosyVoice TTS (声音克隆)
+  │
+  ▼
+WebSocket 推送 → 双栏字幕 + 语音播报
 ```
 
 ## 自动修正机制
@@ -83,37 +92,22 @@ TTS_API_KEY=xxx
 | 翻译回改 | LLM 滑动窗口 | 翻译新句时带前 4 句上下文，LLM 判断是否需要修正前句译文 |
 | 字幕展示 | 三态标记 | 白色=已定稿，灰色=临时，黄色闪烁=已修正 |
 
-## 声音克隆
-
-启用服务端 TTS 后（配置 `TTS_API_KEY`），系统会：
-
-1. 自动采集麦克风前 5 秒音频作为参考样本
-2. 将参考音频发送至服务端
-3. 后续 TTS 使用 CosyVoice 声音克隆 API，以说话者声音播报译文
-4. 克隆失败时自动降级为预设语音
-
-## 技术栈
-
-- **后端**：Node.js + WebSocket (`ws`)
-- **前端**：原生 HTML/CSS/JS，黑白简约主题
-- **ASR**：SiliconFlow SenseVoice / Groq Whisper / OpenAI Whisper
-- **翻译**：DeepSeek / 通义千问 / Kimi / 智谱 / OpenAI（兼容 OpenAI Chat API 格式）
-- **TTS**：SiliconFlow CosyVoice（支持声音克隆） / OpenAI TTS / 浏览器 speechSynthesis
-
 ## 项目结构
 
 ```
 ├── server/
-│   ├── server.js         # HTTP + WebSocket 服务，会话管理
-│   ├── asr.js            # 流式 ASR（PCM→WAV→Whisper API）
+│   ├── server.js         # HTTP + WebSocket + ffmpeg 文件转码
+│   ├── asr.js            # 流式 ASR（5秒分段 + 重叠 + 自动语言检测）
 │   ├── providers.js      # LLM 翻译 + 滑动窗口修正
 │   ├── tts.js            # TTS 语音合成 + 声音克隆
 │   ├── commit.js         # LocalAgreement-2 提交策略
 │   └── .env              # 环境变量配置（不提交）
 ├── web/
-│   ├── index.html        # 页面结构
-│   ├── app.js            # 前端逻辑（音频采集、WebSocket、字幕渲染）
+│   ├── index.html        # 页面结构（含视频预览）
+│   ├── app.js            # 前端逻辑（音频采集、文件上传、字幕渲染）
 │   └── style.css         # 黑白简约主题样式
+├── docs/
+│   └── design.md         # 技术设计文档（含问题排查记录）
 └── .env.example          # 环境变量模板
 ```
 
@@ -121,6 +115,15 @@ TTS_API_KEY=xxx
 
 1. 点击「开始」按钮，允许浏览器访问麦克风
 2. 点击语言切换按钮（EN → 中文）可切换翻译方向
-3. 点击「语音」按钮开启 TTS 语音播报
-4. 支持上传音视频文件进行离线翻译
-5. 字幕区域自动滚动，修正的译文会黄色高亮并标记「已修正」
+3. **上传中文视频时，先切换方向为「中文 → EN」**
+4. 点击「语音」按钮开启 TTS 语音播报
+5. 支持上传任意格式音视频文件（mp4、mkv、avi、mp3、wav 等）
+6. 字幕区域自动滚动，修正的译文会黄色高亮并标记「已修正」
+
+## 技术栈
+
+- **后端**：Node.js + WebSocket (`ws`) + ffmpeg
+- **前端**：原生 HTML/CSS/JS，黑白简约主题
+- **ASR**：SiliconFlow SenseVoice（自动语言检测） / Groq Whisper / OpenAI Whisper
+- **翻译**：DeepSeek / 通义千问 / Kimi / 智谱 / OpenAI（兼容 OpenAI Chat API 格式）
+- **TTS**：SiliconFlow CosyVoice（支持声音克隆） / OpenAI TTS / 浏览器 speechSynthesis
