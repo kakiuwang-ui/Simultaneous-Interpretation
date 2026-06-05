@@ -44,7 +44,6 @@ function updateLangUI() {
   $('langTo').textContent = cfg.toLabel;
   $('sourceLang').textContent = cfg.sourceLang;
   $('targetLang').textContent = cfg.targetLang;
-  $('langToggle').classList.toggle('reversed', direction === 'zh2en');
 }
 
 function toggleDirection() {
@@ -414,49 +413,72 @@ async function startFileUpload(file) {
 
   bar.hidden = false;
   nameEl.textContent = file.name;
-  statusEl2.textContent = '解码中...';
   fill.style.width = '0%';
 
-  await connectWS();
-  ws.send(JSON.stringify({ type: 'start', mode: 'file', filename: file.name, direction }));
+  // 视频预览
+  const preview = $('videoPreview');
+  const player = $('previewPlayer');
+  if (file.type.startsWith('video/')) {
+    const url = URL.createObjectURL(file);
+    player.src = url;
+    preview.hidden = false;
+    player.onloadeddata = () => player.play();
+  } else {
+    preview.hidden = true;
+    player.src = '';
+  }
 
-  // 解码音频文件
-  let audioBuffer;
+  // 上传文件到服务端,由 ffmpeg 转码
+  statusEl2.textContent = '上传中...';
+  toggleButtons(true);
+
+  let cancelled = false;
+  const abortCtrl = new AbortController();
+  fileAbort = () => { cancelled = true; abortCtrl.abort(); };
+
+  let pcm16;
   try {
-    const arrayBuf = await file.arrayBuffer();
-    const offlineCtx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(1, 1, 16000);
-    audioBuffer = await offlineCtx.decodeAudioData(arrayBuf);
+    const resp = await fetch('/upload', {
+      method: 'POST',
+      body: file,
+      signal: abortCtrl.signal,
+    });
+    if (!resp.ok) {
+      statusEl2.textContent = '转码失败: ' + await resp.text();
+      toggleButtons(false);
+      return;
+    }
+    const buf = await resp.arrayBuffer();
+    pcm16 = new Int16Array(buf);
   } catch (err) {
-    statusEl2.textContent = '解码失败: ' + err.message;
+    if (cancelled) { statusEl2.textContent = '已取消'; }
+    else { statusEl2.textContent = '上传失败: ' + err.message; }
+    toggleButtons(false);
     return;
   }
 
-  // 降采样为 16kHz PCM16
-  const inRate = audioBuffer.sampleRate;
-  const inData = audioBuffer.getChannelData(0);
-  const pcm16 = downsampleToPCM16(inData, inRate, 16000);
-
-  // 分块发送
-  const chunkSize = 1600;
-  const totalChunks = Math.ceil(pcm16.length / chunkSize);
-  let cancelled = false;
-  fileAbort = () => { cancelled = true; };
-
-  toggleButtons(true);
   statusEl2.textContent = '发送中...';
+  await connectWS();
+  ws.send(JSON.stringify({ type: 'start', mode: 'file', filename: file.name, direction }));
+
+  // 分块发送 PCM 到 WebSocket ASR
+  // 每次发 8000 samples (0.5秒), 间隔 100ms
+  const chunkSize = 8000;
+  const totalChunks = Math.ceil(pcm16.length / chunkSize);
 
   for (let i = 0; i < totalChunks; i++) {
     if (cancelled) break;
     const start = i * chunkSize;
     const end = Math.min(start + chunkSize, pcm16.length);
     const chunk = pcm16.slice(start, end);
+    // .slice() 返回新 TypedArray, 其 .buffer 是独立的副本
     ws.send(chunk.buffer);
 
     const pct = Math.round(((i + 1) / totalChunks) * 100);
     fill.style.width = pct + '%';
     statusEl2.textContent = `${pct}%`;
 
-    await new Promise((r) => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 100));
   }
 
   if (!cancelled) {

@@ -96,13 +96,6 @@ async function transcribeWav(wavBuffer, lang = 'en') {
     `${cfg.model}\r\n`
   );
 
-  // language 字段
-  parts.push(
-    `--${boundary}\r\n` +
-    `Content-Disposition: form-data; name="language"\r\n\r\n` +
-    `${lang}\r\n`
-  );
-
   // response_format
   parts.push(
     `--${boundary}\r\n` +
@@ -154,11 +147,14 @@ export class StreamingASR {
     this.segId = 0;
     this.active = false;
     this.processing = false;
+    this.overlapBuffer = null;  // 尾部重叠音频
 
-    // 每 2.5 秒的音频触发一次识别(16kHz * 2.5s = 40000 samples)
-    this.chunkThreshold = 40000;
-    // 最小 0.8 秒才值得识别
-    this.minSamples = 12800;
+    // 每 5 秒的音频触发一次识别(16kHz * 5s = 80000 samples)
+    this.chunkThreshold = 80000;
+    // 最小 1.5 秒才值得识别
+    this.minSamples = 24000;
+    // 尾部保留 0.5 秒重叠(避免断句)
+    this.overlapSamples = 8000;
   }
 
   start() {
@@ -179,7 +175,11 @@ export class StreamingASR {
 
   // 强制处理剩余音频
   async flush() {
-    if (this.totalSamples >= this.minSamples && !this.processing) {
+    // 等待当前处理完成
+    while (this.processing) {
+      await new Promise(r => setTimeout(r, 100));
+    }
+    if (this.totalSamples >= this.minSamples) {
       await this._processChunk();
     }
   }
@@ -195,11 +195,22 @@ export class StreamingASR {
 
     // 取出当前所有缓冲
     const chunks = this.pcmChunks;
-    const samples = this.totalSamples;
     this.pcmChunks = [];
     this.totalSamples = 0;
 
-    const pcmData = Buffer.concat(chunks);
+    let pcmData = Buffer.concat(chunks);
+
+    // 拼接上一段尾部重叠
+    if (this.overlapBuffer) {
+      pcmData = Buffer.concat([this.overlapBuffer, pcmData]);
+      this.overlapBuffer = null;
+    }
+
+    // 保留尾部作为下一段的重叠
+    const overlapBytes = this.overlapSamples * 2;
+    if (pcmData.byteLength > overlapBytes * 2) {
+      this.overlapBuffer = pcmData.subarray(pcmData.byteLength - overlapBytes);
+    }
 
     // 简单能量检测 - 如果太安静就跳过
     const int16 = new Int16Array(pcmData.buffer, pcmData.byteOffset, pcmData.byteLength / 2);
@@ -208,8 +219,7 @@ export class StreamingASR {
       energy += Math.abs(int16[i]);
     }
     energy /= int16.length;
-    if (energy < 200) {
-      // 太安静,跳过
+    if (energy < 50) {
       this.processing = false;
       return;
     }
@@ -230,5 +240,10 @@ export class StreamingASR {
     }
 
     this.processing = false;
+
+    // 处理完后检查是否有新积累的数据
+    if (this.totalSamples >= this.chunkThreshold) {
+      this._processChunk();
+    }
   }
 }

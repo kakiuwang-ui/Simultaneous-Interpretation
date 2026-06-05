@@ -138,6 +138,22 @@ body {
 .spacer { flex: 1; }
 .hint { font-size: 12px; color: var(--faint); }
 
+/* ---------------- 视频预览 ---------------- */
+.video-preview {
+  background: #000;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  max-height: 360px;
+}
+.video-preview video {
+  width: 100%;
+  max-height: 360px;
+  display: block;
+  object-fit: contain;
+  background: #000;
+}
+
 /* ---------------- 音频频谱 ---------------- */
 .spectrum-bar {
   height: 36px;

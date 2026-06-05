@@ -11,7 +11,9 @@ import 'dotenv/config';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { spawn } from 'node:child_process';
 import { WebSocketServer } from 'ws';
 import { RollingTranslator } from './providers.js';
 import { StreamingASR, isASRConfigured } from './asr.js';
@@ -21,9 +23,53 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB_DIR = path.join(__dirname, '..', 'web');
 const PORT = process.env.PORT || 8787;
 
-// ---------- 静态文件服务 ----------
+// ---------- ffmpeg 转码: 任意音视频 -> 16kHz PCM16 ----------
+function convertToPCM(inputPath) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    const ff = spawn('ffmpeg', [
+      '-i', inputPath, '-vn',
+      '-acodec', 'pcm_s16le', '-ar', '16000', '-ac', '1',
+      '-f', 's16le', 'pipe:1',
+    ], { stdio: ['ignore', 'pipe', 'pipe'] });
+    ff.stdout.on('data', (d) => chunks.push(d));
+    ff.stderr.on('data', () => {}); // suppress ffmpeg logs
+    ff.on('close', (code) => {
+      if (code !== 0) return reject(new Error(`ffmpeg exit ${code}`));
+      resolve(Buffer.concat(chunks));
+    });
+    ff.on('error', reject);
+  });
+}
+
+// ---------- 静态文件服务 + 文件上传 ----------
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
 const server = http.createServer((req, res) => {
+  // 文件上传接口: POST /upload
+  if (req.method === 'POST' && req.url === '/upload') {
+    const tmpFile = path.join(os.tmpdir(), `si_upload_${Date.now()}`);
+    const ws2 = req.headers['x-ws-id']; // 可选: 关联 WebSocket 会话
+    const out = fs.createWriteStream(tmpFile);
+    req.pipe(out);
+    out.on('finish', async () => {
+      try {
+        const pcm = await convertToPCM(tmpFile);
+        res.writeHead(200, {
+          'Content-Type': 'application/octet-stream',
+          'X-Sample-Rate': '16000',
+          'X-Samples': String(pcm.byteLength / 2),
+        });
+        res.end(pcm);
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'text/plain' });
+        res.end('ffmpeg error: ' + err.message);
+      } finally {
+        fs.unlink(tmpFile, () => {});
+      }
+    });
+    return;
+  }
+
   let urlPath = req.url === '/' ? '/index.html' : req.url.split('?')[0];
   const filePath = path.join(WEB_DIR, urlPath);
   if (!filePath.startsWith(WEB_DIR)) { res.writeHead(403); return res.end(); }
