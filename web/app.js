@@ -29,6 +29,7 @@ const sourceLines = new Map();
 const targetLines = new Map();
 
 let currentSegId = 0;
+let isFileMode = false; // 文件模式下禁用轮播
 
 // 翻译方向
 let direction = 'en2zh';
@@ -96,6 +97,9 @@ function handleMessage(msg) {
       break;
     case 'asr_final':
       renderSource(msg.id, msg.text, '', true);
+      if (msg.startTime != null) {
+        segTimestamps.set(msg.id, { start: msg.startTime, end: msg.endTime });
+      }
       break;
     case 'translation':
       renderTarget(msg.id, msg.target, false);
@@ -112,11 +116,15 @@ function handleMessage(msg) {
   }
 }
 
+// 每段字幕的时间戳 (文件模式用)
+const segTimestamps = new Map(); // id -> { start, end } (秒)
+
 function renderSource(id, committed, pending, isFinal) {
   let rec = sourceLines.get(id);
   if (!rec) {
     const el = document.createElement('div');
     el.className = 'line';
+    el.dataset.segId = id;
     const committedEl = document.createElement('span');
     committedEl.className = 'committed';
     const pendingEl = document.createElement('span');
@@ -126,11 +134,69 @@ function renderSource(id, committed, pending, isFinal) {
     markActive(sourceEl);
     rec = { el, committedEl, pendingEl };
     sourceLines.set(id, rec);
+
+    // 双击编辑原文
+    el.addEventListener('dblclick', () => startEditSource(id));
   }
   rec.committedEl.textContent = committed || '';
   rec.pendingEl.textContent = pending ? ' ' + pending : '';
   rec.el.classList.toggle('is-final', isFinal);
-  scroll(sourceEl);
+  carouselUpdate(sourceEl, sourceLines);
+}
+
+function startEditSource(id) {
+  const rec = sourceLines.get(id);
+  if (!rec) return;
+  const el = rec.el;
+  const oldText = rec.committedEl.textContent;
+
+  // 已在编辑中则跳过
+  if (el.querySelector('.edit-input')) return;
+
+  // 隐藏原内容，显示输入框
+  rec.committedEl.hidden = true;
+  rec.pendingEl.hidden = true;
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'edit-input';
+  input.value = oldText;
+  el.appendChild(input);
+  input.focus();
+  input.select();
+
+  const finish = () => {
+    const newText = input.value.trim();
+    input.remove();
+    rec.committedEl.hidden = false;
+    rec.pendingEl.hidden = false;
+
+    if (!newText) {
+      // 空文本 = 删除这一行
+      deleteSegment(id);
+    } else if (newText !== oldText) {
+      rec.committedEl.textContent = newText;
+      rec.pendingEl.textContent = '';
+      // 发送重新翻译请求
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'retranslate', id, text: newText }));
+      }
+    }
+  };
+
+  input.addEventListener('blur', finish, { once: true });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+    if (e.key === 'Escape') { input.value = oldText; input.blur(); }
+  });
+}
+
+function deleteSegment(id) {
+  const srcRec = sourceLines.get(id);
+  if (srcRec) { srcRec.el.remove(); sourceLines.delete(id); }
+  const tgtRec = targetLines.get(id);
+  if (tgtRec) { tgtRec.el.remove(); targetLines.delete(id); }
+  segTimestamps.delete(id);
 }
 
 function renderTarget(id, text, isCorrection) {
@@ -157,10 +223,46 @@ function renderTarget(id, text, isCorrection) {
     }
     setTimeout(() => rec.el.classList.remove('flash-correct'), 1600);
   }
-  scroll(targetEl);
+  carouselUpdate(targetEl, targetLines);
 }
 
-function scroll(el) { el.scrollTop = el.scrollHeight; }
+// ---------- 轮播字幕：只显示最近 N 条 ----------
+const CAROUSEL_MAX = 1; // 只显示当前一条
+
+function carouselShowAround(centerId, containerEl, linesMap) {
+  const ids = [...linesMap.keys()];
+  const centerIdx = ids.indexOf(centerId);
+  if (centerIdx === -1) return;
+  for (let i = 0; i < ids.length; i++) {
+    const rec = linesMap.get(ids[i]);
+    if (!rec) continue;
+    // 隐藏已过的（当前之前的），显示当前及之后的
+    if (i < centerIdx) {
+      rec.el.classList.add('carousel-hide');
+    } else {
+      rec.el.classList.remove('carousel-hide');
+    }
+  }
+}
+
+function carouselUpdate(containerEl, linesMap) {
+  if (isFileMode) {
+    containerEl.scrollTop = containerEl.scrollHeight;
+    return;
+  }
+  const ids = [...linesMap.keys()];
+  const total = ids.length;
+  for (let i = 0; i < total; i++) {
+    const rec = linesMap.get(ids[i]);
+    if (!rec) continue;
+    const age = total - 1 - i; // 0 = newest
+    if (age >= CAROUSEL_MAX) {
+      rec.el.classList.add('carousel-hide');
+    } else {
+      rec.el.classList.remove('carousel-hide');
+    }
+  }
+}
 
 // ---------- TTS 语音播报 ----------
 let voicesLoaded = false;
@@ -356,6 +458,7 @@ function startBrowserASR() {
 
 // ---------- 麦克风采集 + 发送 ----------
 async function startCapture() {
+  isFileMode = false;
   clearSubtitles();
   await connectWS();
   ws.send(JSON.stringify({ type: 'start', direction }));
@@ -405,6 +508,7 @@ async function startCapture() {
 let fileAbort = null;
 
 async function startFileUpload(file) {
+  isFileMode = true;
   clearSubtitles();
   const bar = $('uploadBar');
   const nameEl = $('uploadName');
@@ -422,7 +526,21 @@ async function startFileUpload(file) {
     const url = URL.createObjectURL(file);
     player.src = url;
     preview.hidden = false;
-    player.onloadeddata = () => player.play();
+    // 不自动播放,等处理完后用户手动播放
+    player.ontimeupdate = () => syncSubtitlesWithVideo(player.currentTime);
+    // 播放时切换为轮播模式
+    player.onplay = () => {
+      sourceEl.classList.remove('scroll-mode');
+      targetEl.classList.remove('scroll-mode');
+    };
+    // 暂停时恢复滚动模式
+    player.onpause = () => {
+      sourceEl.classList.add('scroll-mode');
+      targetEl.classList.add('scroll-mode');
+      // 恢复所有行可见
+      for (const [, rec] of sourceLines) rec.el.classList.remove('carousel-hide');
+      for (const [, rec] of targetLines) rec.el.classList.remove('carousel-hide');
+    };
   } else {
     preview.hidden = true;
     player.src = '';
@@ -491,13 +609,61 @@ async function startFileUpload(file) {
   fileAbort = null;
 }
 
+// ---------- 视频字幕同步 ----------
+let activeSegId = null;
+
+function syncSubtitlesWithVideo(currentTime) {
+  let matchId = null;
+  let nearestId = null;
+  let nearestDist = Infinity;
+  for (const [id, ts] of segTimestamps) {
+    if (currentTime >= ts.start && currentTime < ts.end) {
+      matchId = id;
+      break;
+    }
+    // 找最近的已过段（用于间隙时显示）
+    if (currentTime >= ts.start) {
+      const dist = currentTime - ts.end;
+      if (dist >= 0 && dist < nearestDist) {
+        nearestDist = dist;
+        nearestId = id;
+      }
+    }
+  }
+  // 间隙时保持显示最近的段
+  const showId = matchId ?? nearestId;
+  if (showId === activeSegId) return;
+  activeSegId = showId;
+
+  // 清除所有高亮
+  for (const [, rec] of sourceLines) rec.el.classList.remove('active-seg');
+  for (const [, rec] of targetLines) rec.el.classList.remove('active-seg');
+
+  if (showId != null) {
+    if (matchId != null) {
+      const srcRec = sourceLines.get(matchId);
+      const tgtRec = targetLines.get(matchId);
+      if (srcRec) srcRec.el.classList.add('active-seg');
+      if (tgtRec) tgtRec.el.classList.add('active-seg');
+    }
+    // 轮播模式: 以当前段为中心显示
+    carouselShowAround(showId, sourceEl, sourceLines);
+    carouselShowAround(showId, targetEl, targetLines);
+  }
+}
+
 function clearSubtitles() {
   sourceEl.innerHTML = '';
   targetEl.innerHTML = '';
   sourceLines.clear();
   targetLines.clear();
+  segTimestamps.clear();
+  activeSegId = null;
   sourceEl.closest('.pane').classList.remove('has-content');
   targetEl.closest('.pane').classList.remove('has-content');
+  // 文件模式恢复滚动，实时模式用轮播
+  sourceEl.classList.toggle('scroll-mode', isFileMode);
+  targetEl.classList.toggle('scroll-mode', isFileMode);
 }
 
 function toggleButtons(running) {

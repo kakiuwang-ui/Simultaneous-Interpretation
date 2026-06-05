@@ -144,6 +144,7 @@ export class StreamingASR {
 
     this.pcmChunks = [];       // 当前积累的 PCM 数据
     this.totalSamples = 0;     // 当前缓冲区的样本数
+    this.processedSamples = 0; // 已处理的总样本数(用于时间戳)
     this.segId = 0;
     this.active = false;
     this.processing = false;
@@ -224,6 +225,12 @@ export class StreamingASR {
       return;
     }
 
+    // 计算时间戳
+    const sampleCount = pcmData.byteLength / 2;
+    const startTime = this.processedSamples / 16000;
+    this.processedSamples += sampleCount;
+    const endTime = this.processedSamples / 16000;
+
     this.segId++;
     const segId = this.segId;
 
@@ -235,8 +242,8 @@ export class StreamingASR {
     const text = await transcribeWav(wav, this.lang);
 
     if (text) {
-      console.log(`[ASR] seg${segId}: "${text}"`);
-      this.onFinal?.(segId, text);
+      console.log(`[ASR] seg${segId}: "${text}" [${startTime.toFixed(1)}s-${endTime.toFixed(1)}s]`);
+      this.onFinal?.(segId, text, startTime, endTime);
     }
 
     this.processing = false;

@@ -221,13 +221,27 @@ body {
 
 .subtitles {
   flex: 1;
-  display: flex; flex-direction: column; gap: 12px;
-  overflow-y: auto;
+  display: flex; flex-direction: column;
+  justify-content: flex-start;
+  gap: 12px;
+  overflow: hidden;
   padding: 10px 2px 4px;
-  scroll-behavior: smooth;
+  position: relative;
 }
-.subtitles::-webkit-scrollbar { width: 5px; }
-.subtitles::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+/* 文件模式：恢复滚动 */
+.subtitles.scroll-mode {
+  justify-content: flex-start;
+  overflow-y: auto;
+}
+.subtitles.scroll-mode::-webkit-scrollbar { width: 5px; }
+.subtitles.scroll-mode::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+
+/* 轮播：隐藏非当前行 */
+.subtitles .line.carousel-hide {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+}
 
 .pane-empty {
   position: absolute; left: 0; right: 0; top: 50%;
@@ -260,8 +274,35 @@ body {
 }
 @keyframes blink { 50% { opacity: 0; } }
 
-/* 当前活跃行 */
-.subtitles .line:last-child { background: rgba(255, 255, 255, 0.03); }
+/* 当前活跃行(最新一条) */
+.subtitles .line:not(.carousel-hide):not(.carousel-fade):last-of-type { background: rgba(255, 255, 255, 0.03); }
+
+/* 编辑输入框 */
+.line .edit-input {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 18px;
+  font-family: inherit;
+  padding: 4px 8px;
+  outline: none;
+}
+.line .edit-input:focus {
+  border-color: var(--muted);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* 视频同步当前行高亮 */
+.line.active-seg {
+  background: rgba(80, 200, 120, 0.1);
+  box-shadow: inset 3px 0 0 var(--live);
+}
+
+/* 可编辑提示 */
+.line.is-final { cursor: text; }
+.line.is-final:hover { background: rgba(255, 255, 255, 0.04); }
 
 /* 修正高亮 */
 .line.flash-correct {

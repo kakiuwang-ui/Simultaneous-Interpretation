@@ -145,8 +145,8 @@ wss.on('connection', (ws) => {
             onInterim: (segId, text) => {
               send({ type: 'asr_partial', id: segId, committed: '', pending: text });
             },
-            onFinal: (segId, text) => {
-              send({ type: 'asr_final', id: segId, text });
+            onFinal: (segId, text, startTime, endTime) => {
+              send({ type: 'asr_final', id: segId, text, startTime, endTime });
               translateAndEmit(segId, text);
             },
           });
@@ -178,6 +178,18 @@ wss.on('connection', (ws) => {
         pendingVoiceSample = { sampleRate: msg.sampleRate || 16000, samples: msg.samples || 0 };
         console.log(`[ws] 等待接收语音样本...`);
         break;
+
+      case 'retranslate': {
+        // 用户编辑了原文，重新翻译
+        const newText = (msg.text || '').trim();
+        if (!newText || !translator) break;
+        // 更新历史记录中的原文
+        const hist = translator.history.find(h => h.id === msg.id);
+        if (hist) hist.source = newText;
+        console.log(`[ws] 重新翻译 seg${msg.id}: "${newText}"`);
+        translateAndEmit(msg.id, newText);
+        break;
+      }
 
       case 'file_done':
         console.log('[ws] 文件音频传输完成');
