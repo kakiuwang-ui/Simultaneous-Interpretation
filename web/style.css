@@ -298,6 +298,7 @@ body {
 
 /* 字幕行 */
 .line {
+  position: relative;
   font-size: 18px; line-height: 1.7; letter-spacing: 0.005em;
   padding: 6px 10px; border-radius: 6px;
   transition: color 0.2s, background 0.4s, opacity 0.25s, transform 0.25s;
@@ -349,6 +350,40 @@ body {
 /* 可编辑提示 */
 .line.is-final { cursor: text; }
 .line.is-final:hover { background: rgba(255, 255, 255, 0.04); }
+
+/* 导出下拉菜单 */
+.export-menu {
+  position: absolute; bottom: 100%; left: 0;
+  background: var(--panel-solid); border: 1px solid var(--border-strong);
+  border-radius: 8px; padding: 4px; margin-bottom: 4px;
+  min-width: 120px; z-index: 100;
+  box-shadow: var(--shadow);
+}
+.export-menu button {
+  display: block; width: 100%;
+  padding: 8px 12px; text-align: left;
+  background: none; border: none; color: var(--text);
+  font-size: 13px; font-family: inherit; cursor: pointer;
+  border-radius: 4px;
+}
+.export-menu button:hover { background: rgba(255,255,255,0.08); }
+
+/* 翻译反馈按钮 */
+.feedback-btn {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  background: none; border: none; cursor: pointer;
+  font-size: 14px; opacity: 0; transition: opacity 0.2s;
+  padding: 2px 4px; border-radius: 4px; line-height: 1;
+}
+.line:hover .feedback-btn { opacity: 0.5; }
+.feedback-btn:hover { opacity: 1 !important; background: rgba(255,255,255,0.08); }
+.feedback-btn.sent { opacity: 1; color: var(--live); }
+
+/* 说话人分离颜色 */
+.line.speaker-0 { border-left: 3px solid #6a9ef5; padding-left: 12px; }
+.line.speaker-1 { border-left: 3px solid #f5a623; padding-left: 12px; }
+.line.speaker-0::before { content: "A"; font-size: 9px; font-weight: 700; color: #6a9ef5; margin-right: 6px; opacity: 0.7; }
+.line.speaker-1::before { content: "B"; font-size: 9px; font-weight: 700; color: #f5a623; margin-right: 6px; opacity: 0.7; }
 
 /* 修正高亮 */
 .line.flash-correct {

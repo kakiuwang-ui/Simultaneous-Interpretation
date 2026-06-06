@@ -61,9 +61,12 @@ const SYSTEM_PROMPTS = {
   "target": "本句的中文翻译",
   "corrections": [
     {"id": 句子编号, "target": "修正后的译文"}
+  ],
+  "terms": [
+    {"src": "原文术语", "tgt": "译文术语"}
   ]
 }
-corrections 为空数组表示无需修正。只返回 JSON,不要其他文字。`,
+corrections 为空数组表示无需修正。terms 提取本句中的专业术语对照(可为空数组)。只返回 JSON,不要其他文字。`,
 
   zh2en: `You are a professional simultaneous interpreter, translating Chinese to English in real-time.
 
@@ -78,9 +81,12 @@ Return strictly in JSON format:
   "target": "English translation of this sentence",
   "corrections": [
     {"id": sentence_number, "target": "corrected translation"}
+  ],
+  "terms": [
+    {"src": "source term", "tgt": "target term"}
   ]
 }
-Empty corrections array means no corrections needed. Return JSON only, no other text.`,
+corrections: empty array if no corrections. terms: extract key terminology pairs from this sentence (can be empty). Return JSON only, no other text.`,
 
   ja2zh: `あなたはプロの同時通訳者です。日本語をリアルタイムで中国語に翻訳してください。
 
@@ -269,8 +275,27 @@ const TARGET_LANG_HINT = {
   ko2ja: '日本語に翻訳してください',
 };
 
-function buildUserPrompt(sourceText, context, direction) {
+function buildUserPrompt(sourceText, context, direction, glossary, feedbacks) {
   let prompt = '';
+
+  // 术语表
+  if (glossary && glossary.size > 0) {
+    prompt += '术语表(请保持一致):\n';
+    for (const [src, tgt] of glossary) {
+      prompt += `  ${src} → ${tgt}\n`;
+    }
+    prompt += '\n';
+  }
+
+  // 用户反馈
+  if (feedbacks && feedbacks.length > 0) {
+    prompt += '注意: 用户标记了以下译文不准确,请改进类似翻译:\n';
+    for (const fb of feedbacks) {
+      prompt += `  [句${fb.id}] "${fb.source}" → "${fb.target}" (不准确)\n`;
+    }
+    prompt += '\n';
+  }
+
   if (context.length > 0) {
     prompt += '前文:\n';
     for (const c of context) {
@@ -287,26 +312,52 @@ function buildUserPrompt(sourceText, context, direction) {
 // ============ 翻译 / 修正 ============
 
 export class RollingTranslator {
-  constructor({ contextSize = 4, direction = 'en2zh' } = {}) {
+  constructor({ contextSize = 8, direction = 'en2zh' } = {}) {
     this.contextSize = contextSize;
     this.direction = direction;
     this.history = []; // [{ id, source, target }]
+    this.glossary = new Map(); // 术语表: source term -> target term
+    this.feedbacks = []; // 用户反馈: [{ id, source, target }]
   }
 
   async translate(id, sourceText) {
     const context = this.history.slice(-this.contextSize);
-    const result = await translateLLM(sourceText, context, this.direction);
+    const result = await translateLLM(sourceText, context, this.direction, this.glossary, this.feedbacks);
     this.history.push({ id, source: sourceText, target: result.target });
+
+    // 提取术语对照并更新术语表
+    if (Array.isArray(result.terms)) {
+      for (const t of result.terms) {
+        if (t.src && t.tgt) {
+          this.glossary.set(t.src, t.tgt);
+        }
+      }
+      // 术语表上限 30 条，FIFO 淘汰
+      while (this.glossary.size > 30) {
+        const firstKey = this.glossary.keys().next().value;
+        this.glossary.delete(firstKey);
+      }
+    }
+
     return result;
+  }
+
+  addFeedback(id) {
+    const hist = this.history.find(h => h.id === id);
+    if (hist) {
+      this.feedbacks.push({ id: hist.id, source: hist.source, target: hist.target });
+      // 最多保留最近 3 条反馈
+      if (this.feedbacks.length > 3) this.feedbacks.shift();
+    }
   }
 }
 
-async function translateLLM(sourceText, context, direction = 'en2zh') {
+async function translateLLM(sourceText, context, direction = 'en2zh', glossary = null, feedbacks = null) {
   console.log(`[MT] 翻译方向: ${direction}, 原文: "${sourceText.slice(0, 50)}"`);
   const cfg = getLLMConfig();
   if (!cfg.apiKey) {
     console.error('[MT] LLM_API_KEY 未设置');
-    return { target: `「${sourceText}」`, corrections: [] };
+    return { target: `「${sourceText}」`, corrections: [], terms: [] };
   }
 
   const url = `${cfg.baseUrl}/chat/completions`;
@@ -314,7 +365,7 @@ async function translateLLM(sourceText, context, direction = 'en2zh') {
     model: cfg.model,
     messages: [
       { role: 'system', content: SYSTEM_PROMPTS[direction] || SYSTEM_PROMPTS.en2zh },
-      { role: 'user', content: buildUserPrompt(sourceText, context, direction) },
+      { role: 'user', content: buildUserPrompt(sourceText, context, direction, glossary, feedbacks) },
     ],
     temperature: 0.3,
   };
@@ -332,7 +383,7 @@ async function translateLLM(sourceText, context, direction = 'en2zh') {
     if (!res.ok) {
       const errText = await res.text();
       console.error(`[MT] API 错误 ${res.status}: ${errText}`);
-      return { target: `「${sourceText}」`, corrections: [] };
+      return { target: `「${sourceText}」`, corrections: [], terms: [] };
     }
 
     const data = await res.json();
@@ -347,9 +398,10 @@ async function translateLLM(sourceText, context, direction = 'en2zh') {
     return {
       target: parsed.target || `「${sourceText}」`,
       corrections: Array.isArray(parsed.corrections) ? parsed.corrections : [],
+      terms: Array.isArray(parsed.terms) ? parsed.terms : [],
     };
   } catch (err) {
     console.error('[MT] 翻译失败:', err.message);
-    return { target: `[翻译失败] ${sourceText}`, corrections: [] };
+    return { target: `[翻译失败] ${sourceText}`, corrections: [], terms: [] };
   }
 }

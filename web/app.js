@@ -138,18 +138,20 @@ function handleMessage(msg) {
       renderSource(msg.id, msg.committed, msg.pending, false);
       break;
     case 'asr_final':
-      renderSource(msg.id, msg.text, '', true);
+      renderSource(msg.id, msg.text, '', true, msg.speaker);
       if (msg.startTime != null) {
         segTimestamps.set(msg.id, { start: msg.startTime, end: msg.endTime });
       }
       break;
     case 'translation':
       renderTarget(msg.id, msg.target, false);
+      saveSession();
       // 浏览器 TTS(仅当服务器没配 TTS 时)
       if (ttsMode !== 'server') speakText(msg.target);
       break;
     case 'correction':
       renderTarget(msg.id, msg.target, true);
+      saveSession();
       break;
     case 'tts_audio':
       // 服务器即将发送音频二进制数据
@@ -161,7 +163,12 @@ function handleMessage(msg) {
 // 每段字幕的时间戳 (文件模式用)
 const segTimestamps = new Map(); // id -> { start, end } (秒)
 
-function renderSource(id, committed, pending, isFinal) {
+// 说话人分离: 浏览器 ASR 模式用静音间隔检测
+let browserSpeaker = 0;
+let lastSpeechTime = 0;
+const SPEAKER_SILENCE_MS = 2000; // 2 秒静音切换说话人
+
+function renderSource(id, committed, pending, isFinal, speaker) {
   let rec = sourceLines.get(id);
   if (!rec) {
     const el = document.createElement('div');
@@ -183,6 +190,14 @@ function renderSource(id, committed, pending, isFinal) {
   rec.committedEl.textContent = committed || '';
   rec.pendingEl.textContent = pending ? ' ' + pending : '';
   rec.el.classList.toggle('is-final', isFinal);
+
+  // 说话人标记
+  if (speaker != null) {
+    rec.el.dataset.speaker = speaker;
+    rec.el.classList.toggle('speaker-0', speaker === 0);
+    rec.el.classList.toggle('speaker-1', speaker === 1);
+  }
+
   carouselUpdate(sourceEl, sourceLines);
 }
 
@@ -253,6 +268,31 @@ function renderTarget(id, text, isCorrection) {
     markActive(targetEl);
     rec = { el, textEl };
     targetLines.set(id, rec);
+
+    // 继承说话人标记
+    const srcRec = sourceLines.get(id);
+    if (srcRec && srcRec.el.dataset.speaker != null) {
+      const sp = parseInt(srcRec.el.dataset.speaker);
+      el.dataset.speaker = sp;
+      el.classList.toggle('speaker-0', sp === 0);
+      el.classList.toggle('speaker-1', sp === 1);
+    }
+
+    // 翻译反馈按钮
+    const fbBtn = document.createElement('button');
+    fbBtn.className = 'feedback-btn';
+    fbBtn.title = '标记翻译不准确';
+    fbBtn.textContent = '\u{1F44E}';
+    fbBtn.onclick = (e) => {
+      e.stopPropagation();
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'feedback', id }));
+      }
+      fbBtn.textContent = '\u2713';
+      fbBtn.classList.add('sent');
+      setTimeout(() => { fbBtn.textContent = '\u{1F44E}'; fbBtn.classList.remove('sent'); }, 2000);
+    };
+    el.appendChild(fbBtn);
   }
   rec.textEl.textContent = text;
   if (isCorrection) {
@@ -366,6 +406,8 @@ function toggleTTS() {
 
 function speakText(text) {
   if (!ttsEnabled || !text) return;
+  // 跳过旧的排队文本,直接播放最新的
+  if (ttsQueue.length > 1) ttsQueue = [ttsQueue[ttsQueue.length - 1]];
   ttsQueue.push(text);
   if (!ttsSpeaking) processQueue();
 }
@@ -501,8 +543,15 @@ function startBrowserASR() {
       if (!text.trim()) continue;
 
       if (result.isFinal) {
+        // 说话人分离: 浏览器 ASR 模式
+        const now = Date.now();
+        if (lastSpeechTime > 0 && (now - lastSpeechTime) > SPEAKER_SILENCE_MS) {
+          browserSpeaker = 1 - browserSpeaker;
+        }
+        lastSpeechTime = now;
+
         currentSegId++;
-        ws.send(JSON.stringify({ type: 'asr_final', id: currentSegId, text }));
+        ws.send(JSON.stringify({ type: 'asr_final', id: currentSegId, text, speaker: browserSpeaker }));
       } else {
         ws.send(JSON.stringify({ type: 'asr_interim', id: currentSegId + 1, text }));
       }
@@ -728,6 +777,63 @@ function syncSubtitlesWithVideo(currentTime) {
   }
 }
 
+// ---------- 会话持久化 ----------
+const SESSION_KEY = 'si_session';
+
+function saveSession() {
+  const data = {
+    direction,
+    segments: [],
+  };
+  for (const [id, rec] of sourceLines) {
+    const tgtRec = targetLines.get(id);
+    const ts = segTimestamps.get(id);
+    data.segments.push({
+      id,
+      source: rec.committedEl.textContent,
+      target: tgtRec ? tgtRec.textEl.textContent : '',
+      speaker: rec.el.dataset.speaker != null ? parseInt(rec.el.dataset.speaker) : null,
+      startTime: ts ? ts.start : null,
+      endTime: ts ? ts.end : null,
+    });
+  }
+  try { localStorage.setItem(SESSION_KEY, JSON.stringify(data)); } catch (e) { /* quota */ }
+}
+
+function restoreSession() {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return false;
+    const data = JSON.parse(raw);
+    if (!data.segments || data.segments.length === 0) return false;
+
+    // 恢复语言方向
+    if (data.direction && LANG_CONFIG[data.direction]) {
+      const [from, to] = data.direction.split('2');
+      $('langFrom').value = from;
+      $('langTo').value = to;
+      direction = data.direction;
+      updateLangUI();
+    }
+
+    // 恢复字幕
+    for (const seg of data.segments) {
+      renderSource(seg.id, seg.source, '', true, seg.speaker);
+      if (seg.target) renderTarget(seg.id, seg.target, false);
+      if (seg.startTime != null) {
+        segTimestamps.set(seg.id, { start: seg.startTime, end: seg.endTime });
+      }
+    }
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function clearSession() {
+  try { localStorage.removeItem(SESSION_KEY); } catch (e) { /* ignore */ }
+}
+
 function clearSubtitles() {
   sourceEl.innerHTML = '';
   targetEl.innerHTML = '';
@@ -737,6 +843,7 @@ function clearSubtitles() {
   activeSegId = null;
   sourceEl.closest('.pane').classList.remove('has-content');
   targetEl.closest('.pane').classList.remove('has-content');
+  clearSession();
 }
 
 function toggleButtons(running) {
@@ -778,7 +885,7 @@ function formatSRTTime(seconds) {
   return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')},${String(ms).padStart(3,'0')}`;
 }
 
-function exportSRT() {
+function exportSRT(mode = 'bilingual') {
   const ids = [...sourceLines.keys()];
   if (ids.length === 0) return;
 
@@ -797,25 +904,60 @@ function exportSRT() {
 
     srt += `${idx}\n`;
     srt += `${start} --> ${end}\n`;
-    srt += srcText + '\n';
-    if (tgtText) srt += tgtText + '\n';
+    if (mode === 'source') {
+      srt += srcText + '\n';
+    } else if (mode === 'target') {
+      srt += (tgtText || srcText) + '\n';
+    } else {
+      // bilingual
+      srt += srcText + '\n';
+      if (tgtText) srt += tgtText + '\n';
+    }
     srt += '\n';
     idx++;
   }
 
+  const suffix = mode === 'source' ? 'source' : mode === 'target' ? 'target' : 'bilingual';
   const blob = new Blob([srt], { type: 'text/srt;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `subtitles_${Date.now()}.srt`;
+  a.download = `subtitles_${suffix}_${Date.now()}.srt`;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+function toggleExportMenu() {
+  const menu = $('exportMenu');
+  menu.hidden = !menu.hidden;
+  if (!menu.hidden) {
+    // 点击其他区域关闭菜单
+    setTimeout(() => {
+      document.addEventListener('click', function closeMenu() {
+        menu.hidden = true;
+        document.removeEventListener('click', closeMenu);
+      }, { once: true });
+    }, 0);
+  }
+}
+
+function copyOBSLink() {
+  const url = `${location.origin}/overlay.html?mode=both&dir=${direction}`;
+  navigator.clipboard.writeText(url).then(() => {
+    const btn = $('obsBtn');
+    btn.textContent = '已复制';
+    setTimeout(() => {
+      btn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> OBS';
+    }, 1500);
+  }).catch(() => {
+    prompt('OBS 浏览器源 URL:', url);
+  });
 }
 
 $('startBtn').onclick = startCapture;
 $('stopBtn').onclick = stop;
 $('ttsBtn').onclick = toggleTTS;
-$('exportBtn').onclick = exportSRT;
+$('exportBtn').onclick = (e) => { e.stopPropagation(); toggleExportMenu(); };
 
 // 语言选择器
 $('langFrom').onchange = () => {
@@ -851,3 +993,8 @@ $('fileInput').onchange = (e) => {
   if (file) startFileUpload(file);
   e.target.value = '';
 };
+
+// 页面加载时尝试恢复上次会话
+if (restoreSession()) {
+  $('hint').textContent = '已恢复上次的字幕记录';
+}

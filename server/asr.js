@@ -162,6 +162,11 @@ export class StreamingASR {
     this.chunkThreshold = 40000;
     // 最小 0.8 秒才值得识别
     this.minSamples = 12800;
+
+    // 说话人分离: 基于静音间隔
+    this.currentSpeaker = 0; // 0 或 1
+    this.silentSamples = 0;  // 连续静音样本数
+    this.silenceThreshold = 32000; // 2秒静音 = 说话人切换
   }
 
   start() {
@@ -172,7 +177,25 @@ export class StreamingASR {
   pushAudio(pcmBuffer) {
     if (!this.active) return;
     this.pcmChunks.push(Buffer.from(pcmBuffer));
-    this.totalSamples += pcmBuffer.byteLength / 2;
+    const samples = pcmBuffer.byteLength / 2;
+    this.totalSamples += samples;
+
+    // 说话人分离: 检测静音间隔
+    const int16 = new Int16Array(pcmBuffer.buffer, pcmBuffer.byteOffset, samples);
+    let energy = 0;
+    for (let i = 0; i < int16.length; i++) energy += Math.abs(int16[i]);
+    energy /= int16.length;
+
+    if (energy < 200) {
+      this.silentSamples += samples;
+    } else {
+      // 静音超过阈值 → 切换说话人
+      if (this.silentSamples >= this.silenceThreshold) {
+        this.currentSpeaker = 1 - this.currentSpeaker;
+        console.log(`[ASR] 说话人切换 → Speaker ${this.currentSpeaker}`);
+      }
+      this.silentSamples = 0;
+    }
 
     if (this.totalSamples >= this.chunkThreshold && !this.processing) {
       this._processChunk();
@@ -234,8 +257,8 @@ export class StreamingASR {
     const text = cleanASRText(rawText);
 
     if (text) {
-      console.log(`[ASR] seg${segId}: "${text}" [${startTime.toFixed(1)}s-${endTime.toFixed(1)}s]`);
-      this.onFinal?.(segId, text, startTime, endTime);
+      console.log(`[ASR] seg${segId} (S${this.currentSpeaker}): "${text}" [${startTime.toFixed(1)}s-${endTime.toFixed(1)}s]`);
+      this.onFinal?.(segId, text, startTime, endTime, this.currentSpeaker);
     }
 
     this.processing = false;

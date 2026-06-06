@@ -87,6 +87,14 @@ const server = http.createServer((req, res) => {
 const wss = new WebSocketServer({ server });
 
 let sessionCounter = 0;
+// OBS overlay 广播: 活跃会话 → 所有 overlay 客户端
+const overlayClients = new Set();
+function broadcastToOverlays(msg) {
+  const data = JSON.stringify(msg);
+  for (const oc of overlayClients) {
+    if (oc.readyState === oc.OPEN) oc.send(data);
+  }
+}
 
 wss.on('connection', (ws) => {
   const sessionId = `s${++sessionCounter}_${Date.now()}`;
@@ -103,9 +111,13 @@ wss.on('connection', (ws) => {
   async function translateAndEmit(segId, sourceText) {
     if (!translator) return;
     const { target, corrections } = await translator.translate(segId, sourceText);
-    send({ type: 'translation', id: segId, source: sourceText, target });
+    const transMsg = { type: 'translation', id: segId, source: sourceText, target };
+    send(transMsg);
+    broadcastToOverlays(transMsg);
     for (const c of corrections) {
-      send({ type: 'correction', id: c.id, target: c.target });
+      const corrMsg = { type: 'correction', id: c.id, target: c.target };
+      send(corrMsg);
+      broadcastToOverlays(corrMsg);
     }
     // 服务器端 TTS (支持声音克隆)
     if (serverTTS && target) {
@@ -137,6 +149,14 @@ wss.on('connection', (ws) => {
 
     switch (msg.type) {
       case 'start': {
+        // OBS overlay 客户端: 只接收广播，不创建翻译器
+        if (msg.mode === 'overlay') {
+          overlayClients.add(ws);
+          send({ type: 'ready', mode: 'overlay', asrMode: 'none', ttsMode: 'none' });
+          console.log(`[ws] OBS overlay 客户端已注册`);
+          break;
+        }
+
         const mode = process.env.MT_PROVIDER || 'deepseek';
         const dir = msg.direction || 'en2zh';
         const serverASR = isASRConfigured();
@@ -150,8 +170,10 @@ wss.on('connection', (ws) => {
             onInterim: (segId, committed, pending) => {
               send({ type: 'asr_partial', id: segId, committed, pending });
             },
-            onFinal: (segId, text, startTime, endTime) => {
-              send({ type: 'asr_final', id: segId, text, startTime, endTime });
+            onFinal: (segId, text, startTime, endTime, speaker) => {
+              const asrMsg = { type: 'asr_final', id: segId, text, startTime, endTime, speaker };
+              send(asrMsg);
+              broadcastToOverlays(asrMsg);
               translateAndEmit(segId, text);
             },
           });
@@ -174,7 +196,9 @@ wss.on('connection', (ws) => {
       case 'asr_final': {
         const text = (msg.text || '').trim();
         if (!text) break;
-        send({ type: 'asr_final', id: msg.id, text });
+        const asrFinalMsg = { type: 'asr_final', id: msg.id, text, speaker: msg.speaker };
+        send(asrFinalMsg);
+        broadcastToOverlays(asrFinalMsg);
         translateAndEmit(msg.id, text);
         break;
       }
@@ -197,6 +221,14 @@ wss.on('connection', (ws) => {
         break;
       }
 
+      case 'feedback':
+        // 用户标记译文不准确
+        if (translator && msg.id != null) {
+          translator.addFeedback(msg.id);
+          console.log(`[ws] 用户反馈: seg${msg.id} 翻译不准确`);
+        }
+        break;
+
       case 'file_done':
         console.log('[ws] 文件音频传输完成');
         if (asr) asr.flush();
@@ -207,6 +239,7 @@ wss.on('connection', (ws) => {
   ws.on('close', () => {
     if (asr) asr.stop();
     clearVoiceReference(sessionId);
+    overlayClients.delete(ws);
     console.log(`[ws] 会话结束 (${sessionId})`);
   });
 });

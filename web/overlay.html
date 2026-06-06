@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OBS Subtitle Overlay</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: transparent;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+        "Microsoft YaHei", system-ui, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    .overlay {
+      position: fixed; bottom: 40px; left: 50%;
+      transform: translateX(-50%);
+      max-width: 90vw;
+      text-align: center;
+    }
+    .line {
+      font-size: 32px; line-height: 1.5;
+      color: #fff;
+      text-shadow: 2px 2px 4px rgba(0,0,0,0.8), -1px -1px 2px rgba(0,0,0,0.6);
+      padding: 8px 20px;
+      animation: fadeIn 0.3s ease;
+    }
+    .line.source { font-size: 24px; opacity: 0.8; }
+    .line.target { font-size: 32px; font-weight: 500; }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+  <div class="overlay" id="overlay"></div>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const mode = params.get('mode') || 'target'; // source | target | both
+    const overlay = document.getElementById('overlay');
+
+    let latestSource = '';
+    let latestTarget = '';
+
+    function render() {
+      overlay.innerHTML = '';
+      if ((mode === 'source' || mode === 'both') && latestSource) {
+        const el = document.createElement('div');
+        el.className = 'line source';
+        el.textContent = latestSource;
+        overlay.appendChild(el);
+      }
+      if ((mode === 'target' || mode === 'both') && latestTarget) {
+        const el = document.createElement('div');
+        el.className = 'line target';
+        el.textContent = latestTarget;
+        overlay.appendChild(el);
+      }
+    }
+
+    function connect() {
+      const ws = new WebSocket(`ws://${location.host}`);
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ type: 'start', direction: params.get('dir') || 'en2zh', mode: 'overlay' }));
+      };
+      ws.onmessage = (e) => {
+        if (e.data instanceof ArrayBuffer) return;
+        const msg = JSON.parse(e.data);
+        switch (msg.type) {
+          case 'asr_final':
+            latestSource = msg.text || '';
+            render();
+            break;
+          case 'translation':
+            latestSource = msg.source || latestSource;
+            latestTarget = msg.target || '';
+            render();
+            break;
+          case 'correction':
+            latestTarget = msg.target || '';
+            render();
+            break;
+        }
+      };
+      ws.onclose = () => {
+        setTimeout(connect, 3000);
+      };
+      ws.onerror = () => {};
+    }
+
+    connect();
+  </script>
+</body>
+</html>

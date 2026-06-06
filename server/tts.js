@@ -97,19 +97,42 @@ export function clearVoiceReference(sessionId) {
   sessionVoiceRefs.delete(sessionId);
 }
 
+// 长句拆分: 按标点分段,每段不超过 maxLen 字符
+function splitLongText(text, maxLen = 50) {
+  if (text.length <= maxLen) return [text];
+  // 按中英文标点拆分
+  const parts = text.split(/(?<=[。！？；，、.!?;,])\s*/);
+  const result = [];
+  let current = '';
+  for (const part of parts) {
+    if (current.length + part.length > maxLen && current) {
+      result.push(current);
+      current = part;
+    } else {
+      current += part;
+    }
+  }
+  if (current) result.push(current);
+  return result;
+}
+
 export async function synthesize(text, sessionId) {
   const cfg = getTTSConfig();
   if (!cfg.apiKey || !text) return null;
 
   const voiceRef = sessionId ? sessionVoiceRefs.get(sessionId) : null;
 
+  // 长句拆分: 只合成第一段以降低延迟
+  const parts = splitLongText(text);
+  const firstPart = parts[0];
+
   // SiliconFlow CosyVoice: 有参考音频时用 references 克隆
   if (cfg.provider === 'siliconflow' && voiceRef) {
-    return synthesizeWithClone(cfg, text, voiceRef);
+    return synthesizeWithClone(cfg, firstPart, voiceRef);
   }
 
   // 标准预设音色
-  return synthesizeWithVoice(cfg, text);
+  return synthesizeWithVoice(cfg, firstPart);
 }
 
 async function synthesizeWithVoice(cfg, text) {

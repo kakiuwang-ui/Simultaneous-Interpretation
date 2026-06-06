@@ -151,7 +151,8 @@ LLM Prompt 要求以 JSON 格式返回 `{ target, corrections }` ，corrections 
 ├── web/
 │   ├── index.html          # 页面: 顶栏 + 控制条 + 视频预览 + 频谱 + 双栏字幕
 │   ├── app.js              # 音频采集 + 文件上传 + WebSocket + 字幕渲染 + TTS
-│   └── style.css           # 黑白简约主题 + 响应式
+│   ├── style.css           # 黑白简约主题 + 响应式
+│   └── overlay.html        # OBS 字幕叠加页面（透明背景，浏览器源）
 │
 ├── src/interp/             # Python 框架（预留，未启用）
 ├── .env.example            # 环境变量模板
@@ -171,6 +172,7 @@ LLM Prompt 要求以 JSON 格式返回 `{ target, corrections }` ，corrections 
 | `asr_final` | `id`, `text` | 浏览器 ASR 最终结果 |
 | `voice_sample` | `sampleRate`, `samples` | 声音克隆参考（后跟二进制 PCM） |
 | `retranslate` | `id`, `text` | 用户编辑原文后重新翻译 |
+| `feedback` | `id` | 用户标记译文不准确 |
 | `file_done` | - | 文件音频传输完成 |
 | (binary) | - | PCM16 音频数据 / 语音样本数据 |
 
@@ -180,7 +182,7 @@ LLM Prompt 要求以 JSON 格式返回 `{ target, corrections }` ，corrections 
 |------|------|------|
 | `ready` | `mode`, `asrMode`, `ttsMode` | 会话就绪 |
 | `asr_partial` | `id`, `committed`, `pending` | ASR 临时识别结果 |
-| `asr_final` | `id`, `text`, `startTime`, `endTime` | ASR 最终识别结果（含时间戳） |
+| `asr_final` | `id`, `text`, `startTime`, `endTime`, `speaker` | ASR 最终识别结果（含时间戳和说话人） |
 | `translation` | `id`, `source`, `target` | 翻译结果 |
 | `correction` | `id`, `target` | 译文修正 |
 | `tts_audio` | `id`, `format`, `size` | TTS 音频即将发送（后跟二进制 mp3） |
@@ -210,8 +212,10 @@ LLM Prompt 要求以 JSON 格式返回 `{ target, corrections }` ，corrections 
 ### 6.3 声音克隆 (tts.js)
 
 - 每个 WebSocket 会话独立维护参考音频
-- PCM16 → WAV → base64 data URI
-- CosyVoice API `reference_audio` 参数传入 data URI
+- PCM16 → WAV → base64 data URI → ASR 转录获取 transcript
+- CosyVoice2 API 使用 `references` 数组（含 `audio` data URI + `text` 转录文本）
+- `voice` 和 `references` 互斥，克隆时不传 `voice`
+- 转录为空时跳过克隆，降级为预设音色（`FunAudioLLM/CosyVoice2-0.5B:anna`）
 - 会话结束时自动清理参考音频
 
 ### 6.4 前端音频处理 (app.js)
@@ -264,10 +268,51 @@ LLM Prompt 要求以 JSON 格式返回 `{ target, corrections }` ，corrections 
 
 ### 6.9 SRT 字幕导出
 
-- 一键导出双语 SRT 字幕文件（原文 + 译文）
+- 下拉菜单提供 3 种导出模式：双语字幕、仅原文、仅译文
 - 文件模式有精确时间戳（来自 ASR `processedSamples / 16000`）
 - 实时模式无时间戳时按 5 秒间隔估算
-- 使用 Blob + `<a>` 下载，文件名含时间戳
+- 使用 Blob + `<a>` 下载，文件名含类型和时间戳
+
+### 6.10 翻译上下文记忆与术语表
+
+- 上下文窗口从 4 句扩大到 8 句，提供更好的翻译连贯性
+- LLM 翻译时额外输出 `terms` 字段（术语对照），累积为全局术语表
+- 后续翻译 prompt 注入术语表，确保同一术语始终统一翻译
+- 术语表上限 30 条，FIFO 淘汰
+
+### 6.11 说话人分离
+
+- 基于静音间隔的简单说话人切换检测（非 ML 方案）
+- 服务器端 ASR：连续静音 > 2 秒时切换说话人标记（Speaker 0 / 1 交替）
+- 浏览器 ASR：利用两次 `asr_final` 之间的时间间隔判断说话人切换
+- 前端为不同说话人分配不同颜色左边框和标签（蓝色 A / 橙色 B）
+- 译文自动继承对应原文的说话人标记
+
+### 6.12 流式 TTS 优化
+
+- 长句拆分：超过 50 字符的译文按标点拆分，只合成第一段以降低延迟
+- TTS 队列跳过：新译文到达时跳过队列中的旧文本，直接播放最新内容
+- 回声防止：TTS 播放期间暂停 ASR 和麦克风 PCM 发送
+
+### 6.13 会话持久化
+
+- 使用 localStorage 自动保存字幕数据（原文、译文、时间戳、说话人标记）
+- 页面刷新后自动恢复上次的字幕记录和语言方向
+- 开始新会话时自动清除旧记录
+
+### 6.14 翻译质量反馈
+
+- 译文行 hover 时显示反馈按钮，点击标记"翻译不准确"
+- 反馈发送到服务端，记录在 RollingTranslator 中（最多保留 3 条）
+- 后续翻译 prompt 注入反馈信息，提示 LLM 改进类似翻译
+
+### 6.15 OBS 实时字幕叠加
+
+- 独立的 `/overlay.html` 页面，透明背景，只显示最新一条字幕
+- OBS 作为浏览器源捕获，适用于直播场景
+- URL 参数控制显示模式：`?mode=source|target|both`
+- 通过 WebSocket 接收广播消息，无需独立翻译会话
+- 主页面提供"复制 OBS 链接"按钮
 
 ---
 
