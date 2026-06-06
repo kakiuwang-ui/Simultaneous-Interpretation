@@ -1,24 +1,20 @@
 // 服务器端 TTS - 支持声音克隆
 // -----------------------------------------------------------
-// 支持 OpenAI TTS 格式的 API + CosyVoice 声音克隆
+// 支持 SiliconFlow CosyVoice2 + OpenAI TTS
 //
 // 环境变量:
 //   TTS_BASE_URL=https://api.siliconflow.cn/v1   (默认 SiliconFlow)
 //   TTS_API_KEY=xxx  (不设则用浏览器自带 TTS)
 //   TTS_MODEL=FunAudioLLM/CosyVoice2-0.5B       (默认)
-//   TTS_VOICE=中文女                              (默认,有克隆音频时自动忽略)
+//   TTS_VOICE=FunAudioLLM/CosyVoice2-0.5B:anna  (默认预设音色)
 
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+import { transcribeWav } from './asr.js';
 
 const TTS_PRESETS = {
   siliconflow: {
     baseUrl: 'https://api.siliconflow.cn/v1',
     model: 'FunAudioLLM/CosyVoice2-0.5B',
-    voice: '中文女',
+    voice: 'FunAudioLLM/CosyVoice2-0.5B:anna',
   },
   openai: {
     baseUrl: 'https://api.openai.com/v1',
@@ -43,7 +39,7 @@ export function isTTSConfigured() {
   return !!getTTSConfig().apiKey;
 }
 
-// PCM16 -> WAV (用于声音克隆参考音频)
+// PCM16 -> WAV
 function pcm16ToWav(pcm16Buffer, sampleRate = 16000) {
   const numChannels = 1;
   const bitsPerSample = 16;
@@ -71,15 +67,30 @@ function pcm16ToWav(pcm16Buffer, sampleRate = 16000) {
   return buf;
 }
 
-// 会话级声音克隆参考音频
+// 会话级声音克隆参考: { audioDataUri, transcript }
 const sessionVoiceRefs = new Map();
 
-export function setVoiceReference(sessionId, pcmBuffer, sampleRate) {
+export async function setVoiceReference(sessionId, pcmBuffer, sampleRate) {
   const wavBuf = pcm16ToWav(pcmBuffer, sampleRate);
   const base64 = wavBuf.toString('base64');
-  const dataUri = `data:audio/wav;base64,${base64}`;
-  sessionVoiceRefs.set(sessionId, dataUri);
-  console.log(`[TTS] 已保存语音参考样本 (${(pcmBuffer.byteLength / 1024).toFixed(1)}KB WAV), sessionId=${sessionId}`);
+  const audioDataUri = `data:audio/wav;base64,${base64}`;
+
+  // 用 ASR 转录参考音频（CosyVoice2 references 需要 text）
+  let transcript = '';
+  try {
+    transcript = await transcribeWav(wavBuf);
+    console.log(`[TTS] 参考音频转录: "${transcript}"`);
+  } catch (err) {
+    console.error('[TTS] 转录参考音频失败:', err.message);
+  }
+
+  if (!transcript) {
+    console.log('[TTS] 转录为空，跳过声纹保存（将使用预设音色）');
+    return;
+  }
+
+  sessionVoiceRefs.set(sessionId, { audioDataUri, transcript });
+  console.log(`[TTS] 已保存语音参考样本 (${(wavBuf.byteLength / 1024).toFixed(1)}KB WAV), sessionId=${sessionId}`);
 }
 
 export function clearVoiceReference(sessionId) {
@@ -92,12 +103,16 @@ export async function synthesize(text, sessionId) {
 
   const voiceRef = sessionId ? sessionVoiceRefs.get(sessionId) : null;
 
-  // SiliconFlow CosyVoice 声音克隆: 使用 reference_audio 参数
+  // SiliconFlow CosyVoice: 有参考音频时用 references 克隆
   if (cfg.provider === 'siliconflow' && voiceRef) {
     return synthesizeWithClone(cfg, text, voiceRef);
   }
 
-  // 标准 OpenAI TTS 接口
+  // 标准预设音色
+  return synthesizeWithVoice(cfg, text);
+}
+
+async function synthesizeWithVoice(cfg, text) {
   const url = `${cfg.baseUrl}/audio/speech`;
   const body = {
     model: cfg.model,
@@ -130,13 +145,18 @@ export async function synthesize(text, sessionId) {
   }
 }
 
-async function synthesizeWithClone(cfg, text, referenceAudioDataUri) {
+async function synthesizeWithClone(cfg, text, voiceRef) {
   const url = `${cfg.baseUrl}/audio/speech`;
+  // CosyVoice2 克隆: 用 references 数组，voice 和 references 互斥
   const body = {
     model: cfg.model,
     input: text,
-    voice: cfg.voice,
-    reference_audio: referenceAudioDataUri,
+    references: [
+      {
+        audio: voiceRef.audioDataUri,
+        text: voiceRef.transcript,
+      },
+    ],
     response_format: 'mp3',
   };
 
@@ -153,36 +173,14 @@ async function synthesizeWithClone(cfg, text, referenceAudioDataUri) {
     if (!res.ok) {
       const errText = await res.text();
       console.error(`[TTS] 声音克隆 API 错误 ${res.status}: ${errText}`);
-      // 降级为普通 TTS
-      return synthesizeFallback(cfg, text);
+      // 降级为预设音色
+      return synthesizeWithVoice(cfg, text);
     }
 
     const arrayBuf = await res.arrayBuffer();
     return Buffer.from(arrayBuf);
   } catch (err) {
     console.error('[TTS] 声音克隆失败:', err.message);
-    return synthesizeFallback(cfg, text);
+    return synthesizeWithVoice(cfg, text);
   }
-}
-
-async function synthesizeFallback(cfg, text) {
-  const url = `${cfg.baseUrl}/audio/speech`;
-  const body = {
-    model: cfg.model,
-    input: text,
-    voice: cfg.voice,
-    response_format: 'mp3',
-  };
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${cfg.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) return null;
-    return Buffer.from(await res.arrayBuffer());
-  } catch { return null; }
 }

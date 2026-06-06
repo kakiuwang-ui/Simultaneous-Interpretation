@@ -179,6 +179,16 @@ body {
 }
 .btn:disabled, .btn.disabled { opacity: 0.3; cursor: not-allowed; pointer-events: none; }
 .spacer { flex: 1; }
+.voice-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 10px; border-radius: 999px;
+  font-size: 11px; font-weight: 600;
+  background: rgba(80, 200, 120, 0.15); color: var(--live);
+  border: 1px solid rgba(80, 200, 120, 0.3);
+  animation: pulse-badge 1.5s ease infinite;
+}
+.voice-badge.ready { animation: none; background: rgba(80, 200, 120, 0.2); }
+@keyframes pulse-badge { 50% { opacity: 0.6; } }
 .hint { font-size: 12px; color: var(--faint); }
 
 /* ---------------- 视频预览 ---------------- */
@@ -368,8 +378,31 @@ body {
 
 /* ---------------- 响应式 ---------------- */
 @media (max-width: 820px) {
-  .stage { grid-template-columns: 1fr; }
+  .app { padding: 12px 10px 20px; gap: 12px; }
+  .topbar { flex-wrap: wrap; gap: 10px; }
+  .brand-text h1 { font-size: 15px; }
+  .tagline { display: none; }
+  .lang-picker { margin-left: 0; order: 3; width: 100%; justify-content: center; }
+  .status-pill { margin-left: auto; }
+  .controls { gap: 6px; }
+  .btn { padding: 8px 12px; font-size: 12px; }
+  .hint { font-size: 11px; width: 100%; text-align: center; }
+  .stage { grid-template-columns: 1fr; min-height: 50vh; }
   .divider { height: 1px; width: auto; }
-  .lang-flow { display: none; }
-  .line { font-size: 16px; }
+  .pane { padding: 14px 12px; }
+  .line { font-size: 15px; line-height: 1.6; padding: 4px 8px; }
+  .video-preview { max-height: 240px; }
+  .video-preview video { max-height: 240px; }
+  .legend-bar { flex-wrap: wrap; gap: 10px; font-size: 10px; }
+}
+
+@media (max-width: 480px) {
+  .app { padding: 8px 6px 16px; }
+  .logo { width: 32px; height: 32px; }
+  .logo svg { width: 14px; height: 14px; }
+  .btn { padding: 7px 10px; font-size: 11px; gap: 4px; }
+  .btn svg { width: 12px; height: 12px; }
+  .pane-head { padding-bottom: 8px; margin-bottom: 4px; }
+  .line { font-size: 14px; }
+  .spectrum-bar { height: 28px; }
 }

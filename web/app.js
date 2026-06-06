@@ -76,15 +76,40 @@ function setStatus(s, live = false) {
 
 function markActive(paneEl) { paneEl.closest('.pane').classList.add('has-content'); }
 
+let wsReconnectTimer = null;
+let wsShouldReconnect = false;
+let wsReconnectAttempts = 0;
+
 function connectWS() {
   return new Promise((resolve) => {
+    if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
     ws = new WebSocket(`ws://${location.host}`);
     ws.binaryType = 'arraybuffer';
-    ws.onopen = () => { setStatus('已连接'); resolve(); };
-    ws.onclose = () => setStatus('连接已关闭');
+    wsShouldReconnect = true;
+    ws.onopen = () => {
+      wsReconnectAttempts = 0;
+      setStatus('已连接');
+      resolve();
+    };
+    ws.onclose = () => {
+      setStatus('连接已断开');
+      if (wsShouldReconnect && !$('stopBtn').disabled) {
+        // 指数退避重连：1s, 2s, 4s, 最大 10s
+        const delay = Math.min(1000 * Math.pow(2, wsReconnectAttempts), 10000);
+        wsReconnectAttempts++;
+        setStatus(`断线重连中 (${Math.round(delay/1000)}s)...`);
+        wsReconnectTimer = setTimeout(async () => {
+          try {
+            await connectWS();
+            // 重连后重新发 start
+            ws.send(JSON.stringify({ type: 'start', direction, mode: isFileMode ? 'file' : undefined }));
+          } catch (e) { /* retry will happen on next close */ }
+        }, delay);
+      }
+    };
+    ws.onerror = () => {}; // onclose will fire
     ws.onmessage = (e) => {
       if (e.data instanceof ArrayBuffer) {
-        // 服务器 TTS 音频(mp3)
         if (ttsEnabled && pendingTTSAudio) {
           playAudioBuffer(e.data);
           pendingTTSAudio = null;
@@ -299,22 +324,33 @@ function collectVoiceSample(pcm16) {
   if (voiceSampleSent || !ws || ws.readyState !== WebSocket.OPEN) return;
   voiceSampleBuffer.push(pcm16);
   voiceSampleSize += pcm16.length;
+
+  // 显示采集进度
+  if (ttsMode === 'server') {
+    const pct = Math.min(100, Math.round((voiceSampleSize / VOICE_SAMPLE_TOTAL) * 100));
+    const badge = $('voiceBadge');
+    if (badge) {
+      badge.hidden = false;
+      badge.textContent = pct < 100 ? `采集声纹 ${pct}%` : '声纹已就绪';
+      badge.classList.toggle('ready', pct >= 100);
+    }
+  }
+
   if (voiceSampleSize >= VOICE_SAMPLE_TOTAL) {
-    // 合并所有 PCM 块
     const merged = new Int16Array(voiceSampleSize);
     let offset = 0;
     for (const chunk of voiceSampleBuffer) {
       merged.set(chunk, offset);
       offset += chunk.length;
     }
-    // 截取刚好 5 秒
     const sample = merged.slice(0, VOICE_SAMPLE_TOTAL);
-    // 发送给服务器
     ws.send(JSON.stringify({ type: 'voice_sample', sampleRate: VOICE_SAMPLE_RATE, samples: VOICE_SAMPLE_TOTAL }));
     ws.send(sample.buffer);
     voiceSampleSent = true;
     voiceSampleBuffer = [];
     console.log('[TTS] 语音样本已发送 (5秒)');
+    // 3 秒后隐藏 badge
+    setTimeout(() => { const b = $('voiceBadge'); if (b) b.hidden = true; }, 3000);
   }
 }
 
@@ -350,17 +386,49 @@ function processQueue() {
     if (enVoice) utter.voice = enVoice;
   }
   utter.volume = 1;
-  utter.onend = () => processQueue();
-  utter.onerror = () => processQueue();
+  // 暂停 ASR 防止回声
+  if (recognition) { try { recognition.stop(); } catch(e) {} }
+  ttsPlaying = true;
+  const resumeASR = () => {
+    ttsPlaying = false;
+    if (recognition && !$('stopBtn').disabled) {
+      try { recognition.start(); } catch(e) {}
+    }
+    processQueue();
+  };
+  utter.onend = resumeASR;
+  utter.onerror = resumeASR;
   speechSynthesis.speak(utter);
+}
+
+let ttsPlaying = false;
+
+function pauseRecognitionDuring(audio) {
+  // 暂停浏览器 ASR 防止回声
+  if (recognition) {
+    try { recognition.stop(); } catch (e) { /* ignore */ }
+  }
+  // 静音麦克风送入服务器的 PCM
+  ttsPlaying = true;
+
+  const resume = () => {
+    ttsPlaying = false;
+    // 重启浏览器 ASR
+    if (recognition && !$('stopBtn').disabled) {
+      try { recognition.start(); } catch (e) { /* ignore */ }
+    }
+  };
+  audio.onended = resume;
+  audio.onerror = resume;
 }
 
 function playAudioBuffer(arrayBuf) {
   const blob = new Blob([arrayBuf], { type: 'audio/mp3' });
   const url = URL.createObjectURL(blob);
   const audio = new Audio(url);
-  audio.onended = () => URL.revokeObjectURL(url);
-  audio.play().catch(() => {});
+  audio.onended = () => { URL.revokeObjectURL(url); };
+  pauseRecognitionDuring(audio);
+  audio.play().catch(() => { ttsPlaying = false; });
 }
 
 // ---------- 音频频谱可视化 ----------
@@ -451,7 +519,8 @@ function startBrowserASR() {
   };
 
   recognition.onend = () => {
-    if ($('stopBtn').disabled === false) {
+    // TTS 播放中不自动重启，等播放完后恢复
+    if ($('stopBtn').disabled === false && !ttsPlaying) {
       try { recognition.start(); } catch (e) { /* ignore */ }
     }
   };
@@ -494,6 +563,7 @@ async function startCapture() {
   const inRate = audioCtx.sampleRate;
   scriptNode.onaudioprocess = (e) => {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (ttsPlaying) return; // TTS 播放中不送音频，防止回声
     const input = e.inputBuffer.getChannelData(0);
     const pcm16 = downsampleToPCM16(input, inRate, 16000);
     ws.send(pcm16.buffer);
@@ -573,6 +643,17 @@ async function startFileUpload(file) {
   statusEl2.textContent = '发送中...';
   await connectWS();
   ws.send(JSON.stringify({ type: 'start', mode: 'file', filename: file.name, direction }));
+
+  // 提取前 5 秒 PCM 作为声音克隆参考
+  if (ttsMode === 'server' || true) { // 总是发送，服务器会判断是否启用 TTS
+    const sampleLen = Math.min(VOICE_SAMPLE_TOTAL, pcm16.length);
+    if (sampleLen >= VOICE_SAMPLE_RATE) { // 至少 1 秒
+      const sample = pcm16.slice(0, sampleLen);
+      ws.send(JSON.stringify({ type: 'voice_sample', sampleRate: VOICE_SAMPLE_RATE, samples: sampleLen }));
+      ws.send(sample.buffer);
+      console.log(`[TTS] 文件模式: 已发送声纹样本 (${(sampleLen / VOICE_SAMPLE_RATE).toFixed(1)}秒)`);
+    }
+  }
 
   // 分块发送 PCM 到 WebSocket ASR
   // 每次发 8000 samples (0.5秒), 间隔 100ms
@@ -666,6 +747,8 @@ function toggleButtons(running) {
 }
 
 function stop() {
+  wsShouldReconnect = false;
+  if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
   if (fileAbort) fileAbort();
   if (recognition) { try { recognition.stop(); } catch(e) {} recognition = null; }
   if (scriptNode) { scriptNode.disconnect(); scriptNode = null; }
@@ -680,6 +763,8 @@ function stop() {
   voiceSampleSent = false;
   voiceSampleBuffer = [];
   voiceSampleSize = 0;
+  const badge = $('voiceBadge');
+  if (badge) { badge.hidden = true; badge.classList.remove('ready'); }
   toggleButtons(false);
   setStatus('已停止');
 }

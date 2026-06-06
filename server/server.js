@@ -118,12 +118,13 @@ wss.on('connection', (ws) => {
     }
   }
 
-  ws.on('message', (raw, isBinary) => {
+  ws.on('message', async (raw, isBinary) => {
     if (isBinary) {
       // 检查是否是语音克隆参考样本
       if (pendingVoiceSample) {
-        setVoiceReference(sessionId, raw, pendingVoiceSample.sampleRate);
-        pendingVoiceSample = null;
+        const sr = pendingVoiceSample.sampleRate;
+        pendingVoiceSample = null; // 立即清除，防止后续 PCM 被误认为声纹
+        setVoiceReference(sessionId, raw, sr); // 异步处理，不阻塞消息接收
         return;
       }
       // PCM 音频数据 -> 送入 ASR

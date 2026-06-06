@@ -72,7 +72,7 @@ function cleanASRText(text) {
 
 // ============ 调用 Whisper API ============
 
-async function transcribeWav(wavBuffer, lang) {
+export async function transcribeWav(wavBuffer, lang) {
   const cfg = getASRConfig();
   if (!cfg.apiKey) {
     console.error('[ASR] API_KEY 未设置');
