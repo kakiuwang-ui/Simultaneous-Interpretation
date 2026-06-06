@@ -1,4 +1,14 @@
-import 'dotenv/config';
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { fileURLToPath } from 'node:url';
+import { spawn } from 'node:child_process';
+import dotenv from 'dotenv';
+
+// 加载 server/.env（确保从任意工作目录启动都能找到）
+const __server_dir = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.join(__server_dir, '.env') });
 
 // 同声传译助手 - 后端编排
 // -----------------------------------------------------------
@@ -7,19 +17,12 @@ import 'dotenv/config';
 //     -> StreamingASR(缓冲音频 -> Whisper API 识别)
 //     -> RollingTranslator(LLM 翻译 + 回头修正前句)
 //     -> WebSocket 推回浏览器:双栏字幕 + 译文修正
-
-import http from 'node:http';
-import fs from 'node:fs';
-import path from 'node:path';
-import os from 'node:os';
-import { fileURLToPath } from 'node:url';
-import { spawn } from 'node:child_process';
 import { WebSocketServer } from 'ws';
 import { RollingTranslator } from './providers.js';
 import { StreamingASR, isASRConfigured } from './asr.js';
 import { isTTSConfigured, synthesize, setVoiceReference, clearVoiceReference } from './tts.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const __dirname = __server_dir;
 const WEB_DIR = path.join(__dirname, '..', 'web');
 const PORT = process.env.PORT || 8787;
 
@@ -136,14 +139,15 @@ wss.on('connection', (ws) => {
         const mode = process.env.MT_PROVIDER || 'deepseek';
         const dir = msg.direction || 'en2zh';
         const serverASR = isASRConfigured();
+        const isFile = msg.mode === 'file';
         translator = new RollingTranslator({ direction: dir });
 
-        if (serverASR) {
-          // 服务器端 ASR
+        // 文件模式用服务器 ASR; 实时麦克风模式用浏览器 Web Speech API(逐词显示、低延迟)
+        if (isFile && serverASR) {
           asr = new StreamingASR({
             direction: dir,
-            onInterim: (segId, text) => {
-              send({ type: 'asr_partial', id: segId, committed: '', pending: text });
+            onInterim: (segId, committed, pending) => {
+              send({ type: 'asr_partial', id: segId, committed, pending });
             },
             onFinal: (segId, text, startTime, endTime) => {
               send({ type: 'asr_final', id: segId, text, startTime, endTime });
@@ -153,8 +157,9 @@ wss.on('connection', (ws) => {
           asr.start();
         }
 
-        console.log(`[ws] 会话开始, 翻译: ${mode}, 方向: ${dir}, ASR: ${serverASR ? (process.env.ASR_PROVIDER || 'siliconflow') : 'browser'}, TTS: ${serverTTS ? 'server' : 'browser'}`);
-        send({ type: 'ready', mode, asrMode: serverASR ? 'server' : 'browser', ttsMode: serverTTS ? 'server' : 'browser' });
+        const asrMode = (isFile && serverASR) ? 'server' : 'browser';
+        console.log(`[ws] 会话开始, 翻译: ${mode}, 方向: ${dir}, 模式: ${isFile ? 'file' : 'live'}, ASR: ${asrMode === 'server' ? (process.env.ASR_PROVIDER || 'siliconflow') : 'browser'}, TTS: ${serverTTS ? 'server' : 'browser'}`);
+        send({ type: 'ready', mode, asrMode, ttsMode: serverTTS ? 'server' : 'browser' });
         break;
       }
 

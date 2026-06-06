@@ -37,19 +37,36 @@ let direction = 'en2zh';
 const LANG_CONFIG = {
   en2zh: { asrLang: 'en-US', fromLabel: 'EN', toLabel: '中文', sourceLang: 'English', targetLang: '中文', hint: '请说英文...' },
   zh2en: { asrLang: 'zh-CN', fromLabel: '中文', toLabel: 'EN', sourceLang: '中文', targetLang: 'English', hint: '请说中文...' },
+  ja2zh: { asrLang: 'ja', fromLabel: '日本語', toLabel: '中文', sourceLang: '日本語', targetLang: '中文', hint: '日本語で話してください...' },
+  zh2ja: { asrLang: 'zh-CN', fromLabel: '中文', toLabel: '日本語', sourceLang: '中文', targetLang: '日本語', hint: '请说中文...' },
+  ko2zh: { asrLang: 'ko', fromLabel: '한국어', toLabel: '中文', sourceLang: '한국어', targetLang: '中文', hint: '한국어로 말해주세요...' },
+  zh2ko: { asrLang: 'zh-CN', fromLabel: '中文', toLabel: '한국어', sourceLang: '中文', targetLang: '한국어', hint: '请说中文...' },
+  en2ja: { asrLang: 'en-US', fromLabel: 'EN', toLabel: '日本語', sourceLang: 'English', targetLang: '日本語', hint: 'Speak English...' },
+  ja2en: { asrLang: 'ja', fromLabel: '日本語', toLabel: 'EN', sourceLang: '日本語', targetLang: 'English', hint: '日本語で話してください...' },
+  en2ko: { asrLang: 'en-US', fromLabel: 'EN', toLabel: '한국어', sourceLang: 'English', targetLang: '한국어', hint: 'Speak English...' },
+  ko2en: { asrLang: 'ko', fromLabel: '한국어', toLabel: 'EN', sourceLang: '한국어', targetLang: 'English', hint: '한국어로 말해주세요...' },
+  ja2ko: { asrLang: 'ja', fromLabel: '日本語', toLabel: '한국어', sourceLang: '日本語', targetLang: '한국어', hint: '日本語で話してください...' },
+  ko2ja: { asrLang: 'ko', fromLabel: '한국어', toLabel: '日本語', sourceLang: '한국어', targetLang: '日本語', hint: '한국어로 말해주세요...' },
 };
 
-function updateLangUI() {
-  const cfg = LANG_CONFIG[direction];
-  $('langFrom').textContent = cfg.fromLabel;
-  $('langTo').textContent = cfg.toLabel;
-  $('sourceLang').textContent = cfg.sourceLang;
-  $('targetLang').textContent = cfg.targetLang;
+// 语言代码 → 显示名
+const LANG_LABELS = { en: 'English', zh: '中文', ja: '日本語', ko: '한국어' };
+
+function deriveDirection() {
+  const from = $('langFrom').value;
+  const to = $('langTo').value;
+  const key = from + '2' + to;
+  if (LANG_CONFIG[key]) {
+    direction = key;
+  }
 }
 
-function toggleDirection() {
-  direction = direction === 'en2zh' ? 'zh2en' : 'en2zh';
-  updateLangUI();
+function updateLangUI() {
+  deriveDirection();
+  const cfg = LANG_CONFIG[direction];
+  if (!cfg) return;
+  $('sourceLang').textContent = cfg.sourceLang;
+  $('targetLang').textContent = cfg.targetLang;
 }
 
 function setStatus(s, live = false) {
@@ -246,22 +263,8 @@ function carouselShowAround(centerId, containerEl, linesMap) {
 }
 
 function carouselUpdate(containerEl, linesMap) {
-  if (isFileMode) {
-    containerEl.scrollTop = containerEl.scrollHeight;
-    return;
-  }
-  const ids = [...linesMap.keys()];
-  const total = ids.length;
-  for (let i = 0; i < total; i++) {
-    const rec = linesMap.get(ids[i]);
-    if (!rec) continue;
-    const age = total - 1 - i; // 0 = newest
-    if (age >= CAROUSEL_MAX) {
-      rec.el.classList.add('carousel-hide');
-    } else {
-      rec.el.classList.remove('carousel-hide');
-    }
-  }
+  // 实时模式和文件模式都滚动到底部，显示所有句子
+  containerEl.scrollTop = containerEl.scrollHeight;
 }
 
 // ---------- TTS 语音播报 ----------
@@ -528,16 +531,8 @@ async function startFileUpload(file) {
     preview.hidden = false;
     // 不自动播放,等处理完后用户手动播放
     player.ontimeupdate = () => syncSubtitlesWithVideo(player.currentTime);
-    // 播放时切换为轮播模式
-    player.onplay = () => {
-      sourceEl.classList.remove('scroll-mode');
-      targetEl.classList.remove('scroll-mode');
-    };
-    // 暂停时恢复滚动模式
+    // 暂停时恢复所有行可见
     player.onpause = () => {
-      sourceEl.classList.add('scroll-mode');
-      targetEl.classList.add('scroll-mode');
-      // 恢复所有行可见
       for (const [, rec] of sourceLines) rec.el.classList.remove('carousel-hide');
       for (const [, rec] of targetLines) rec.el.classList.remove('carousel-hide');
     };
@@ -661,9 +656,6 @@ function clearSubtitles() {
   activeSegId = null;
   sourceEl.closest('.pane').classList.remove('has-content');
   targetEl.closest('.pane').classList.remove('has-content');
-  // 文件模式恢复滚动，实时模式用轮播
-  sourceEl.classList.toggle('scroll-mode', isFileMode);
-  targetEl.classList.toggle('scroll-mode', isFileMode);
 }
 
 function toggleButtons(running) {
@@ -692,10 +684,82 @@ function stop() {
   setStatus('已停止');
 }
 
+// ---------- 导出 SRT 字幕 ----------
+function formatSRTTime(seconds) {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  const ms = Math.round((seconds % 1) * 1000);
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')},${String(ms).padStart(3,'0')}`;
+}
+
+function exportSRT() {
+  const ids = [...sourceLines.keys()];
+  if (ids.length === 0) return;
+
+  let srt = '';
+  let idx = 1;
+  for (const id of ids) {
+    const srcRec = sourceLines.get(id);
+    const tgtRec = targetLines.get(id);
+    const ts = segTimestamps.get(id);
+    const srcText = srcRec ? srcRec.committedEl.textContent : '';
+    const tgtText = tgtRec ? tgtRec.textEl.textContent : '';
+    if (!srcText && !tgtText) continue;
+
+    const start = ts ? formatSRTTime(ts.start) : formatSRTTime((idx - 1) * 5);
+    const end = ts ? formatSRTTime(ts.end) : formatSRTTime(idx * 5);
+
+    srt += `${idx}\n`;
+    srt += `${start} --> ${end}\n`;
+    srt += srcText + '\n';
+    if (tgtText) srt += tgtText + '\n';
+    srt += '\n';
+    idx++;
+  }
+
+  const blob = new Blob([srt], { type: 'text/srt;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `subtitles_${Date.now()}.srt`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 $('startBtn').onclick = startCapture;
 $('stopBtn').onclick = stop;
 $('ttsBtn').onclick = toggleTTS;
-$('langToggle').onclick = toggleDirection;
+$('exportBtn').onclick = exportSRT;
+
+// 语言选择器
+$('langFrom').onchange = () => {
+  // 如果源和目标相同，自动换掉目标
+  if ($('langFrom').value === $('langTo').value) {
+    const others = ['en','zh','ja','ko'].filter(v => v !== $('langFrom').value);
+    $('langTo').value = others[0];
+  }
+  updateLangUI();
+};
+$('langTo').onchange = () => {
+  if ($('langTo').value === $('langFrom').value) {
+    const others = ['en','zh','ja','ko'].filter(v => v !== $('langTo').value);
+    $('langFrom').value = others[0];
+  }
+  updateLangUI();
+};
+
+// 交换按钮
+$('langSwap').onclick = () => {
+  const btn = $('langSwap');
+  btn.classList.add('spinning');
+  const tmp = $('langFrom').value;
+  $('langFrom').value = $('langTo').value;
+  $('langTo').value = tmp;
+  updateLangUI();
+  setTimeout(() => btn.classList.remove('spinning'), 400);
+};
+
 updateLangUI();
 $('fileInput').onchange = (e) => {
   const file = e.target.files[0];

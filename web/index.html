@@ -24,11 +24,26 @@
         </div>
       </div>
 
-      <button class="lang-flow" id="langToggle" title="点击切换翻译方向">
-        <span class="lang" id="langFrom">EN</span>
-        <svg class="arrow" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-        <span class="lang accent" id="langTo">中文</span>
-      </button>
+      <div class="lang-picker" id="langPicker">
+        <select class="lang-sel" id="langFrom" title="源语言">
+          <option value="en">EN</option>
+          <option value="zh">中文</option>
+          <option value="ja">日本語</option>
+          <option value="ko">한국어</option>
+        </select>
+        <button class="lang-swap" id="langSwap" title="交换语言方向">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M7 16l-4-4 4-4"/><path d="M17 8l4 4-4 4"/>
+            <line x1="3" y1="12" x2="21" y2="12"/>
+          </svg>
+        </button>
+        <select class="lang-sel" id="langTo" title="目标语言">
+          <option value="zh">中文</option>
+          <option value="en">EN</option>
+          <option value="ja">日本語</option>
+          <option value="ko">한국어</option>
+        </select>
+      </div>
 
       <div class="status-pill" id="statusPill">
         <span class="status-dot" id="statusDot"></span>
@@ -53,6 +68,10 @@
       <button id="ttsBtn" class="btn btn-ghost" title="开关语音播报">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
         语音
+      </button>
+      <button id="exportBtn" class="btn btn-ghost" title="导出 SRT 字幕文件">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        导出SRT
       </button>
       <div class="spacer"></div>
       <div class="hint" id="hint">点击「开始」使用麦克风收音(需 Chrome),或上传音视频文件</div>

@@ -81,9 +81,195 @@ Return strictly in JSON format:
   ]
 }
 Empty corrections array means no corrections needed. Return JSON only, no other text.`,
+
+  ja2zh: `あなたはプロの同時通訳者です。日本語をリアルタイムで中国語に翻訳してください。
+
+ルール:
+1. 翻訳は自然で流暢な中国語にすること
+2. 専門用語や固有名詞はそのまま保持するか、括弧で注釈を付ける
+3. 前の文とその翻訳がコンテキストとして提供されます
+4. 現在の文に基づいて、以前の翻訳に誤りがあれば corrections で修正を指示
+
+厳密に JSON 形式で返してください:
+{
+  "target": "本句的中文翻译",
+  "corrections": [
+    {"id": 句子编号, "target": "修正后的译文"}
+  ]
+}
+corrections が空配列なら修正不要。JSON のみ返してください。`,
+
+  zh2ja: `你是专业的同声传译员,将中文实时翻译为日文。
+
+规则:
+1. 翻译要自然流畅,符合日语表达习惯
+2. 保留专业术语和专有名词
+3. 你会收到前几句的原文和已发出的译文作为上下文
+4. 如果根据当前新句子的内容,发现之前某句译文有误,请在 corrections 中指出
+
+严格返回 JSON 格式:
+{
+  "target": "この文の日本語翻訳",
+  "corrections": [
+    {"id": 句子编号, "target": "修正後の訳文"}
+  ]
+}
+corrections 为空数组表示无需修正。只返回 JSON,不要其他文字。`,
+
+  ko2zh: `당신은 전문 동시통역사입니다. 한국어를 실시간으로 중국어로 번역하세요.
+
+규칙:
+1. 번역은 자연스럽고 유창한 중국어로
+2. 전문 용어와 고유명사는 유지하거나 괄호로 주석
+3. 이전 문장과 번역이 컨텍스트로 제공됩니다
+4. 현재 문장을 기반으로 이전 번역에 오류가 있으면 corrections에 수정을 포함
+
+엄격하게 JSON 형식으로 반환:
+{
+  "target": "本句的中文翻译",
+  "corrections": [
+    {"id": 句子编号, "target": "修正后的译文"}
+  ]
+}
+corrections가 빈 배열이면 수정 불필요. JSON만 반환.`,
+
+  zh2ko: `你是专业的同声传译员,将中文实时翻译为韩文。
+
+规则:
+1. 翻译要自然流畅,符合韩语表达习惯
+2. 保留专业术语和专有名词
+3. 你会收到前几句的原文和已发出的译文作为上下文
+4. 如果根据当前新句子的内容,发现之前某句译文有误,请在 corrections 中指出
+
+严格返回 JSON 格式:
+{
+  "target": "이 문장의 한국어 번역",
+  "corrections": [
+    {"id": 句子编号, "target": "수정된 번역"}
+  ]
+}
+corrections 为空数组表示无需修正。只返回 JSON,不要其他文字。`,
+
+  en2ja: `You are a professional simultaneous interpreter, translating English to Japanese in real-time.
+
+Rules:
+1. Translation should be natural and fluent Japanese
+2. Keep proper nouns and technical terms as-is or annotate in parentheses
+3. You will receive previous sentences with their translations as context
+4. If based on the current sentence, you find a previous translation was inaccurate, include corrections
+
+Return strictly in JSON format:
+{
+  "target": "この文の日本語翻訳",
+  "corrections": [
+    {"id": sentence_number, "target": "修正後の訳文"}
+  ]
+}
+Empty corrections array means no corrections needed. Return JSON only, no other text.`,
+
+  ja2en: `You are a professional simultaneous interpreter, translating Japanese to English in real-time.
+
+Rules:
+1. Translation should be natural, fluent, and suitable for spoken English
+2. Keep proper nouns and technical terms as-is
+3. You will receive previous sentences with their translations as context
+4. If based on the current sentence, you find a previous translation was inaccurate, include corrections
+
+Return strictly in JSON format:
+{
+  "target": "English translation of this sentence",
+  "corrections": [
+    {"id": sentence_number, "target": "corrected translation"}
+  ]
+}
+Empty corrections array means no corrections needed. Return JSON only, no other text.`,
+
+  en2ko: `You are a professional simultaneous interpreter, translating English to Korean in real-time.
+
+Rules:
+1. Translation should be natural and fluent Korean
+2. Keep proper nouns and technical terms as-is
+3. You will receive previous sentences with their translations as context
+4. If based on the current sentence, you find a previous translation was inaccurate, include corrections
+
+Return strictly in JSON format:
+{
+  "target": "이 문장의 한국어 번역",
+  "corrections": [
+    {"id": sentence_number, "target": "수정된 번역"}
+  ]
+}
+Empty corrections array means no corrections needed. Return JSON only, no other text.`,
+
+  ko2en: `You are a professional simultaneous interpreter, translating Korean to English in real-time.
+
+Rules:
+1. Translation should be natural, fluent, and suitable for spoken English
+2. Keep proper nouns and technical terms as-is
+3. You will receive previous sentences with their translations as context
+4. If based on the current sentence, you find a previous translation was inaccurate, include corrections
+
+Return strictly in JSON format:
+{
+  "target": "English translation of this sentence",
+  "corrections": [
+    {"id": sentence_number, "target": "corrected translation"}
+  ]
+}
+Empty corrections array means no corrections needed. Return JSON only, no other text.`,
+
+  ja2ko: `あなたはプロの同時通訳者です。日本語をリアルタイムで韓国語に翻訳してください。
+
+ルール:
+1. 翻訳は自然で流暢な韓国語にすること
+2. 専門用語や固有名詞はそのまま保持
+3. 前の文とその翻訳がコンテキストとして提供されます
+4. 現在の文に基づいて、以前の翻訳に誤りがあれば corrections で修正を指示
+
+厳密に JSON 形式で返してください:
+{
+  "target": "이 문장의 한국어 번역",
+  "corrections": [
+    {"id": sentence_number, "target": "수정된 번역"}
+  ]
+}
+corrections が空配列なら修正不要。JSON のみ返してください。`,
+
+  ko2ja: `당신은 전문 동시통역사입니다. 한국어를 실시간으로 일본어로 번역하세요.
+
+규칙:
+1. 번역은 자연스럽고 유창한 일본어로
+2. 전문 용어와 고유명사는 유지
+3. 이전 문장과 번역이 컨텍스트로 제공됩니다
+4. 현재 문장을 기반으로 이전 번역에 오류가 있으면 corrections에 수정을 포함
+
+엄격하게 JSON 형식으로 반환:
+{
+  "target": "この文の日本語翻訳",
+  "corrections": [
+    {"id": sentence_number, "target": "修正後の訳文"}
+  ]
+}
+corrections가 빈 배열이면 수정 불필요. JSON만 반환.`,
 };
 
-function buildUserPrompt(sourceText, context) {
+// 目标语言提示（确保 LLM 输出正确语言）
+const TARGET_LANG_HINT = {
+  en2zh: '请翻译为中文',
+  zh2en: 'Translate to English',
+  ja2zh: '中国語に翻訳してください',
+  zh2ja: '日本語に翻訳してください',
+  ko2zh: '중국어로 번역하세요',
+  zh2ko: '한국어로 번역하세요',
+  en2ja: '日本語に翻訳してください',
+  ja2en: 'Translate to English',
+  en2ko: '한국어로 번역하세요',
+  ko2en: 'Translate to English',
+  ja2ko: '한국어로 번역하세요',
+  ko2ja: '日本語に翻訳してください',
+};
+
+function buildUserPrompt(sourceText, context, direction) {
   let prompt = '';
   if (context.length > 0) {
     prompt += '前文:\n';
@@ -93,7 +279,8 @@ function buildUserPrompt(sourceText, context) {
     }
     prompt += '\n';
   }
-  prompt += `请翻译这句新的原文:\n${sourceText}`;
+  const hint = TARGET_LANG_HINT[direction] || '';
+  prompt += `${hint}\n原文: ${sourceText}`;
   return prompt;
 }
 
@@ -115,6 +302,7 @@ export class RollingTranslator {
 }
 
 async function translateLLM(sourceText, context, direction = 'en2zh') {
+  console.log(`[MT] 翻译方向: ${direction}, 原文: "${sourceText.slice(0, 50)}"`);
   const cfg = getLLMConfig();
   if (!cfg.apiKey) {
     console.error('[MT] LLM_API_KEY 未设置');
@@ -126,7 +314,7 @@ async function translateLLM(sourceText, context, direction = 'en2zh') {
     model: cfg.model,
     messages: [
       { role: 'system', content: SYSTEM_PROMPTS[direction] || SYSTEM_PROMPTS.en2zh },
-      { role: 'user', content: buildUserPrompt(sourceText, context) },
+      { role: 'user', content: buildUserPrompt(sourceText, context, direction) },
     ],
     temperature: 0.3,
   };
@@ -149,17 +337,19 @@ async function translateLLM(sourceText, context, direction = 'en2zh') {
 
     const data = await res.json();
     const content = data.choices?.[0]?.message?.content || '';
+    console.log(`[MT] LLM 原始返回 (${direction}): ${content.slice(0, 200)}`);
 
     // 提取 JSON(兼容模型返回 ```json ... ``` 包裹的情况)
     const jsonStr = content.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
     const parsed = JSON.parse(jsonStr);
 
+    console.log(`[MT] 译文: "${parsed.target}"`);
     return {
       target: parsed.target || `「${sourceText}」`,
       corrections: Array.isArray(parsed.corrections) ? parsed.corrections : [],
     };
   } catch (err) {
     console.error('[MT] 翻译失败:', err.message);
-    return { target: `「${sourceText}」`, corrections: [] };
+    return { target: `[翻译失败] ${sourceText}`, corrections: [] };
   }
 }
