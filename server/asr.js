@@ -149,8 +149,8 @@ export class StreamingASR {
     this.onFinal = onFinal;
     this.direction = direction;
     this.liveStream = liveStream; // true = 标签页模式（1秒小块 + 文字累积）
-    // 从 direction 前缀提取源语言,传给 ASR API
-    this.sourceLang = direction.split('2')[0]; // en2zh→'en', zh2ja→'zh', etc.
+    // 不指定源语言,让 ASR 自动检测(避免用户选错方向导致识别错误)
+    this.sourceLang = null;
 
     this.pcmChunks = [];
     this.totalSamples = 0;

@@ -45,6 +45,53 @@ function getLLMConfig() {
   };
 }
 
+// ============ 语言检测 ============
+
+/**
+ * 简单语言检测: 根据 Unicode 字符范围判断文本主要语言
+ * 返回 'zh' | 'ja' | 'ko' | 'en'
+ */
+export function detectLang(text) {
+  let zh = 0, ja = 0, ko = 0, en = 0;
+  for (const ch of text) {
+    const code = ch.codePointAt(0);
+    if (code >= 0x3040 && code <= 0x30FF || code >= 0x31F0 && code <= 0x31FF) {
+      ja++; // 平假名 + 片假名
+    } else if (code >= 0xAC00 && code <= 0xD7AF || code >= 0x1100 && code <= 0x11FF) {
+      ko++; // 韩文音节 + 韩文字母
+    } else if (code >= 0x4E00 && code <= 0x9FFF || code >= 0x3400 && code <= 0x4DBF) {
+      zh++; // CJK 统一汉字 (日文也用汉字，后面处理)
+    } else if (code >= 0x41 && code <= 0x5A || code >= 0x61 && code <= 0x7A) {
+      en++;
+    }
+  }
+  // 日文混用汉字: 如果有平假名/片假名，汉字也归为日文
+  if (ja > 0) ja += zh, zh = 0;
+  const max = Math.max(zh, ja, ko, en);
+  if (max === 0) return 'en';
+  if (max === ja) return 'ja';
+  if (max === ko) return 'ko';
+  if (max === zh) return 'zh';
+  return 'en';
+}
+
+/**
+ * 根据检测到的语言自动修正翻译方向
+ * @param {string} detectedLang - 检测到的源语言
+ * @param {string} currentDir - 当前翻译方向 (如 'en2zh')
+ * @returns {string} 修正后的翻译方向
+ */
+export function autoCorrectDirection(detectedLang, currentDir) {
+  const [srcLang, tgtLang] = currentDir.split('2');
+  if (detectedLang === srcLang) return currentDir; // 方向正确
+  if (detectedLang === tgtLang) return tgtLang + '2' + srcLang; // 完全反转
+  // 检测到的语言跟两端都不同，用检测语言翻到目标语言
+  const newDir = detectedLang + '2' + tgtLang;
+  if (SYSTEM_PROMPTS[newDir]) return newDir;
+  // 如果不支持该方向，保持原方向
+  return currentDir;
+}
+
 // ============ 翻译 Prompt ============
 
 const SYSTEM_PROMPTS = {
@@ -320,9 +367,10 @@ export class RollingTranslator {
     this.feedbacks = []; // 用户反馈: [{ id, source, target }]
   }
 
-  async translate(id, sourceText, onPartial) {
+  async translate(id, sourceText, onPartial, directionOverride) {
+    const dir = directionOverride || this.direction;
     const context = this.history.slice(-this.contextSize);
-    const result = await translateLLM(sourceText, context, this.direction, this.glossary, this.feedbacks, onPartial);
+    const result = await translateLLM(sourceText, context, dir, this.glossary, this.feedbacks, onPartial);
     this.history.push({ id, source: sourceText, target: result.target });
 
     // 提取术语对照并更新术语表

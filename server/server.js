@@ -18,7 +18,7 @@ dotenv.config({ path: path.join(__server_dir, '.env') });
 //     -> RollingTranslator(LLM 翻译 + 回头修正前句)
 //     -> WebSocket 推回浏览器:双栏字幕 + 译文修正
 import { WebSocketServer } from 'ws';
-import { RollingTranslator } from './providers.js';
+import { RollingTranslator, detectLang, autoCorrectDirection } from './providers.js';
 import { StreamingASR, isASRConfigured } from './asr.js';
 import { isTTSConfigured, synthesize, setVoiceReference, clearVoiceReference } from './tts.js';
 
@@ -146,6 +146,7 @@ wss.on('connection', (ws) => {
   console.log(`[ws] 客户端已连接 (${sessionId})`);
   let translator = null;
   let asr = null;
+  let sessionDirection = 'en2zh'; // 用户选择的翻译方向
   let pendingVoiceSample = null; // 等待接收的语音样本二进制数据
   let urlStream = null; // URL 模式的音频流
 
@@ -156,11 +157,18 @@ wss.on('connection', (ws) => {
   // 翻译已定稿原文,广播译文 + 修正 + TTS 音频
   async function translateAndEmit(segId, sourceText) {
     if (!translator) return;
+    // 自动检测语言,修正翻译方向
+    const detected = detectLang(sourceText);
+    const correctedDir = autoCorrectDirection(detected, sessionDirection);
+    if (correctedDir !== sessionDirection) {
+      console.log(`[MT] 语言自动检测: "${detected}", 方向修正 ${sessionDirection} → ${correctedDir}`);
+    }
     // 流式翻译: 逐步发送 partial 译文
     const onPartial = (partial) => {
       send({ type: 'translation_partial', id: segId, partial });
     };
-    const { target, corrections } = await translator.translate(segId, sourceText, onPartial);
+    const dirOverride = correctedDir !== translator.direction ? correctedDir : undefined;
+    const { target, corrections } = await translator.translate(segId, sourceText, onPartial, dirOverride);
     const transMsg = { type: 'translation', id: segId, source: sourceText, target };
     send(transMsg);
     broadcastToOverlays(transMsg);
@@ -209,6 +217,7 @@ wss.on('connection', (ws) => {
 
         const mode = process.env.MT_PROVIDER || 'deepseek';
         const dir = msg.direction || 'en2zh';
+        sessionDirection = dir;
         const serverASR = isASRConfigured();
         const isFile = msg.mode === 'file';
         const isTab = msg.mode === 'tab';
@@ -285,6 +294,7 @@ wss.on('connection', (ws) => {
       case 'start_url': {
         // 在线视频 URL 模式: yt-dlp + ffmpeg 提取音频 → 服务器 ASR
         const urlDir = msg.direction || 'en2zh';
+        sessionDirection = urlDir;
         const videoUrl = (msg.url || '').trim();
         if (!videoUrl) { send({ type: 'error', message: 'URL 不能为空' }); break; }
 
