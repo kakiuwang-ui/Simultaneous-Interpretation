@@ -100,3 +100,27 @@
 - 主页面控制条增加「复制 OBS 链接」按钮
 
 **涉及文件**: `web/overlay.html`, `web/overlay.js`, `web/overlay.css`, `web/index.html`
+
+---
+
+## 11. 标签页音频捕获 + 画中画字幕
+
+**场景**: 用户在浏览器中打开 YouTube 等视频，希望自动识别音频并实时翻译，字幕显示在悬浮窗口中，同时保留完整文档记录。
+
+**核心技术**:
+- `getDisplayMedia({ audio: true })` 捕获浏览器标签页音频
+- Document Picture-in-Picture API 创建 always-on-top 悬浮字幕窗口
+- 标签页音频使用服务器端 ASR（Web Speech API 不支持 getDisplayMedia 音频流）
+
+**实现**:
+- 新增「标签页」按钮，点击后弹出标签页选择器
+- 选择目标标签页后，捕获其音频流并通过 WebSocket 发送到服务器
+- 服务器以 `mode: 'tab'` 创建 `StreamingASR` 实例，复用现有 ASR + 翻译管线
+- 同时打开 Document PiP 悬浮窗口，实时显示原文和译文
+- PiP 窗口：深色半透明背景、原文小字灰色、译文大字白色、always-on-top
+- 降级方案：不支持 Document PiP 时使用 `window.open()` 弹窗
+- 主页面保留完整字幕文档，支持 SRT 导出和会话持久化
+- 音频轨道 `ended` 事件自动清理（用户从浏览器 UI 停止共享时）
+- 无 `getDisplayMedia` 支持时隐藏按钮
+
+**涉及文件**: `server/server.js`, `web/index.html`, `web/app.js`, `web/style.css`

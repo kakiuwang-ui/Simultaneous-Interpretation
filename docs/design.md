@@ -314,6 +314,17 @@ LLM Prompt 要求以 JSON 格式返回 `{ target, corrections }` ，corrections 
 - 通过 WebSocket 接收广播消息，无需独立翻译会话
 - 主页面提供"复制 OBS 链接"按钮
 
+### 6.16 标签页音频捕获 + 画中画字幕
+
+- 使用 `getDisplayMedia({ audio: true })` 捕获浏览器标签页音频（如 YouTube 视频）
+- 标签页音频使用服务器端 ASR（Web Speech API 不支持 getDisplayMedia 音频流），WebSocket `mode: 'tab'`
+- Document Picture-in-Picture API 创建 always-on-top 悬浮字幕窗口
+- PiP 窗口显示实时原文（小字灰色）+ 译文（大字白色），深色半透明背景
+- 降级方案：不支持 Document PiP 时使用 `window.open()` 弹窗
+- 主页面同步显示完整字幕文档，支持 SRT 导出和会话持久化
+- 音频轨道 `ended` 事件自动清理（用户停止共享时）
+- 无 `getDisplayMedia` 支持时自动隐藏按钮
+
 ---
 
 ## 7. 开发过程中遇到的问题与解决方案

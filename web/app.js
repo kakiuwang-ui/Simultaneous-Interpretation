@@ -30,6 +30,9 @@ const targetLines = new Map();
 
 let currentSegId = 0;
 let isFileMode = false; // 文件模式下禁用轮播
+let isTabAudioMode = false; // 标签页音频捕获模式
+let isUrlMode = false; // 在线视频 URL 模式
+let pipWindow = null; // Document PiP 悬浮字幕窗口
 
 // 翻译方向
 let direction = 'en2zh';
@@ -102,7 +105,11 @@ function connectWS() {
           try {
             await connectWS();
             // 重连后重新发 start
-            ws.send(JSON.stringify({ type: 'start', direction, mode: isFileMode ? 'file' : undefined }));
+            if (isUrlMode) {
+              ws.send(JSON.stringify({ type: 'start_url', direction, url: $('urlInput').value.trim() }));
+            } else {
+              ws.send(JSON.stringify({ type: 'start', direction, mode: isFileMode ? 'file' : isTabAudioMode ? 'tab' : undefined }));
+            }
           } catch (e) { /* retry will happen on next close */ }
         }, delay);
       }
@@ -128,34 +135,63 @@ function handleMessage(msg) {
       ttsMode = msg.ttsMode || 'browser';
       setStatus('实时翻译中', true);
       $('modeLabel').textContent = `${msg.mode}`;
-      $('hint').textContent = '正在监听语音,字幕将实时出现并自动修正';
-      // 如果是浏览器 ASR 模式,启动 Web Speech API
-      if (asrMode === 'browser') {
-        startBrowserASR();
+      if (isTabAudioMode) {
+        $('hint').textContent = '正在捕获标签页音频，字幕将显示在浮动窗口中';
+      } else {
+        $('hint').textContent = '正在监听语音,字幕将实时出现并自动修正';
+        // 如果是浏览器 ASR 模式,启动 Web Speech API
+        if (asrMode === 'browser') {
+          startBrowserASR();
+        }
       }
       break;
     case 'asr_partial':
       renderSource(msg.id, msg.committed, msg.pending, false);
+      updatePiPSubtitles((msg.committed || '') + ' ' + (msg.pending || ''), undefined);
       break;
     case 'asr_final':
       renderSource(msg.id, msg.text, '', true, msg.speaker);
       if (msg.startTime != null) {
         segTimestamps.set(msg.id, { start: msg.startTime, end: msg.endTime });
       }
+      updatePiPSubtitles(msg.text, undefined);
+      break;
+    case 'translation_partial':
+      renderTarget(msg.id, msg.partial, false, true);
+      updatePiPSubtitles(undefined, msg.partial);
       break;
     case 'translation':
       renderTarget(msg.id, msg.target, false);
       saveSession();
+      updatePiPSubtitles(msg.source || undefined, msg.target);
       // 浏览器 TTS(仅当服务器没配 TTS 时)
       if (ttsMode !== 'server') speakText(msg.target);
       break;
     case 'correction':
       renderTarget(msg.id, msg.target, true);
       saveSession();
+      updatePiPSubtitles(undefined, msg.target);
       break;
     case 'tts_audio':
       // 服务器即将发送音频二进制数据
       pendingTTSAudio = msg;
+      break;
+    case 'url_status': {
+      const urlStatusEl = $('urlStatus');
+      if (urlStatusEl) urlStatusEl.textContent = msg.message || '';
+      if (msg.status === 'streaming') {
+        setStatus('在线视频翻译中', true);
+      } else if (msg.status === 'done') {
+        setStatus('视频翻译完成');
+      } else if (msg.status === 'error') {
+        setStatus('翻译出错');
+        $('hint').textContent = msg.message || '未知错误';
+      }
+      break;
+    }
+    case 'error':
+      setStatus('错误');
+      $('hint').textContent = msg.message || '未知错误';
       break;
   }
 }
@@ -256,7 +292,7 @@ function deleteSegment(id) {
   segTimestamps.delete(id);
 }
 
-function renderTarget(id, text, isCorrection) {
+function renderTarget(id, text, isCorrection, isPartial = false) {
   let rec = targetLines.get(id);
   if (!rec) {
     const el = document.createElement('div');
@@ -295,6 +331,8 @@ function renderTarget(id, text, isCorrection) {
     el.appendChild(fbBtn);
   }
   rec.textEl.textContent = text;
+  // 流式翻译中标记为 partial（半透明 + 光标）
+  rec.el.classList.toggle('is-partial', isPartial);
   if (isCorrection) {
     rec.el.classList.add('flash-correct');
     if (!rec.el.querySelector('.corrected-tag')) {
@@ -577,6 +615,164 @@ function startBrowserASR() {
   recognition.start();
 }
 
+// ---------- 画中画悬浮字幕窗口 ----------
+async function openPiPSubtitles() {
+  const pipStyles = `
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: rgba(0, 0, 0, 0.85);
+      color: #e8e8e8;
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+      padding: 12px 16px;
+      overflow: hidden;
+      display: flex; flex-direction: column; justify-content: center;
+      min-height: 100vh;
+    }
+    .pip-source { font-size: 16px; color: #999; margin-bottom: 6px; line-height: 1.5; }
+    .pip-target { font-size: 22px; font-weight: 500; color: #f0f0f0; line-height: 1.4; }
+    .pip-line { animation: fadeIn 0.2s ease; }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  `;
+  const pipBody = '<div class="pip-source" id="pipSource"></div><div class="pip-target" id="pipTarget"></div>';
+
+  if ('documentPictureInPicture' in window) {
+    try {
+      pipWindow = await documentPictureInPicture.requestWindow({ width: 500, height: 180 });
+      pipWindow.document.head.innerHTML = `<style>${pipStyles}</style>`;
+      pipWindow.document.body.innerHTML = pipBody;
+      pipWindow.addEventListener('pagehide', () => { pipWindow = null; });
+      return;
+    } catch (e) {
+      console.warn('[PiP] Document PiP 失败，降级为弹窗:', e.message);
+    }
+  }
+
+  // 降级: 普通弹窗
+  pipWindow = window.open('', 'subtitles', 'width=500,height=200');
+  if (pipWindow) {
+    pipWindow.document.head.innerHTML = `<style>${pipStyles}</style>`;
+    pipWindow.document.body.innerHTML = pipBody;
+    pipWindow.onbeforeunload = () => { pipWindow = null; };
+  }
+}
+
+function updatePiPSubtitles(sourceText, targetText) {
+  if (!pipWindow) return;
+  try {
+    const doc = pipWindow.document;
+    if (sourceText !== undefined) {
+      const el = doc.getElementById('pipSource');
+      if (el) el.textContent = sourceText;
+    }
+    if (targetText !== undefined) {
+      const el = doc.getElementById('pipTarget');
+      if (el) el.textContent = targetText;
+    }
+  } catch (e) {
+    pipWindow = null;
+  }
+}
+
+// ---------- 标签页音频捕获 ----------
+async function startTabAudioCapture() {
+  isFileMode = false;
+  isTabAudioMode = true;
+  clearSubtitles();
+
+  // 先开 PiP（需要 user gesture，必须在 getDisplayMedia 之前）
+  await openPiPSubtitles();
+
+  try {
+    mediaStream = await navigator.mediaDevices.getDisplayMedia({
+      video: true,
+      audio: true,
+    });
+  } catch (err) {
+    setStatus('取消了标签页选择');
+    isTabAudioMode = false;
+    if (pipWindow) { try { pipWindow.close(); } catch (e) {} pipWindow = null; }
+    return;
+  }
+
+  // 只需要音频，停止视频轨道
+  mediaStream.getVideoTracks().forEach(t => t.stop());
+
+  // 检查是否获得了音频轨道
+  if (mediaStream.getAudioTracks().length === 0) {
+    setStatus('未获取到音频');
+    $('hint').textContent = '请在选择标签页时勾选「分享音频」';
+    isTabAudioMode = false;
+    mediaStream.getTracks().forEach(t => t.stop());
+    if (pipWindow) { try { pipWindow.close(); } catch (e) {} pipWindow = null; }
+    return;
+  }
+
+  // 监听音频轨道结束（用户从浏览器 UI 停止共享）
+  mediaStream.getAudioTracks()[0].addEventListener('ended', () => {
+    stop();
+  });
+
+  await connectWS();
+  ws.send(JSON.stringify({ type: 'start', direction, mode: 'tab' }));
+
+  // 建立音频处理链：捕获标签页音频并发送 PCM 到服务器 ASR
+  audioCtx = new AudioContext();
+  const src = audioCtx.createMediaStreamSource(mediaStream);
+
+  analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 256;
+  analyser.smoothingTimeConstant = 0.75;
+  src.connect(analyser);
+
+  scriptNode = audioCtx.createScriptProcessor(4096, 1, 1);
+  src.connect(scriptNode);
+  scriptNode.connect(audioCtx.destination);
+
+  const inRate = audioCtx.sampleRate;
+  scriptNode.onaudioprocess = (e) => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const input = e.inputBuffer.getChannelData(0);
+    const pcm16 = downsampleToPCM16(input, inRate, 16000);
+    ws.send(pcm16.buffer);
+  };
+
+  setupSpectrum();
+  toggleButtons(true);
+  $('tabAudioBtn').classList.add('active');
+  setStatus('捕获标签页音频中', true);
+}
+
+// ---------- 在线视频 URL 模式 ----------
+async function startUrlTranslation(url) {
+  isFileMode = false;
+  isTabAudioMode = false;
+  isUrlMode = true;
+  clearSubtitles();
+
+  await connectWS();
+  ws.send(JSON.stringify({ type: 'start_url', direction, url }));
+
+  toggleButtons(true);
+  $('urlBtn').classList.add('active');
+  $('urlBar').hidden = false;
+  $('urlStatus').textContent = '正在提取音频流...';
+  setStatus('连接中...', true);
+  $('hint').textContent = '正在从 URL 提取音频并实时翻译';
+}
+
+function toggleUrlBar() {
+  const bar = $('urlBar');
+  if (bar.hidden) {
+    bar.hidden = false;
+    $('urlInput').focus();
+  } else {
+    bar.hidden = true;
+  }
+}
+
 // ---------- 麦克风采集 + 发送 ----------
 async function startCapture() {
   isFileMode = false;
@@ -850,6 +1046,8 @@ function toggleButtons(running) {
   $('startBtn').disabled = running;
   $('uploadBtn').classList.toggle('disabled', running);
   $('fileInput').disabled = running;
+  $('tabAudioBtn').disabled = running;
+  $('urlBtn').disabled = running;
   $('stopBtn').disabled = !running;
 }
 
@@ -872,6 +1070,17 @@ function stop() {
   voiceSampleSize = 0;
   const badge = $('voiceBadge');
   if (badge) { badge.hidden = true; badge.classList.remove('ready'); }
+  // URL 模式清理
+  if (isUrlMode && ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'stop_url' }));
+  }
+  isUrlMode = false;
+  $('urlBtn').classList.remove('active');
+  $('urlBar').hidden = true;
+  // 标签页模式清理
+  isTabAudioMode = false;
+  $('tabAudioBtn').classList.remove('active');
+  if (pipWindow) { try { pipWindow.close(); } catch (e) {} pipWindow = null; }
   toggleButtons(false);
   setStatus('已停止');
 }
@@ -957,7 +1166,25 @@ function copyOBSLink() {
 $('startBtn').onclick = startCapture;
 $('stopBtn').onclick = stop;
 $('ttsBtn').onclick = toggleTTS;
+$('tabAudioBtn').onclick = startTabAudioCapture;
+$('urlBtn').onclick = toggleUrlBar;
+$('urlGoBtn').onclick = () => {
+  const url = $('urlInput').value.trim();
+  if (!url) { $('urlInput').focus(); return; }
+  startUrlTranslation(url);
+};
+$('urlInput').onkeydown = (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    $('urlGoBtn').click();
+  }
+};
 $('exportBtn').onclick = (e) => { e.stopPropagation(); toggleExportMenu(); };
+
+// 无 getDisplayMedia 支持时隐藏标签页按钮
+if (!navigator.mediaDevices?.getDisplayMedia) {
+  $('tabAudioBtn').style.display = 'none';
+}
 
 // 语言选择器
 $('langFrom').onchange = () => {

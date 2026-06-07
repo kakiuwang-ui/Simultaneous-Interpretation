@@ -144,10 +144,11 @@ export async function transcribeWav(wavBuffer, lang) {
 // ============ 流式 ASR 会话 ============
 
 export class StreamingASR {
-  constructor({ onInterim, onFinal, direction = 'en2zh' }) {
+  constructor({ onInterim, onFinal, direction = 'en2zh', liveStream = false }) {
     this.onInterim = onInterim;
     this.onFinal = onFinal;
     this.direction = direction;
+    this.liveStream = liveStream; // true = 标签页模式（1秒小块 + 文字累积）
     // 从 direction 前缀提取源语言,传给 ASR API
     this.sourceLang = direction.split('2')[0]; // en2zh→'en', zh2ja→'zh', etc.
 
@@ -158,15 +159,35 @@ export class StreamingASR {
     this.active = false;
     this.processing = false;
 
-    // 每 2.5 秒触发一次识别
-    this.chunkThreshold = 40000;
-    // 最小 0.8 秒才值得识别
-    this.minSamples = 12800;
+    // 实时模式: 1.5秒触发一次(低延迟); 文件模式: 2.5秒
+    this.chunkThreshold = liveStream ? 24000 : 40000;
+    // 最小识别时长
+    this.minSamples = liveStream ? 8000 : 12800;
 
-    // 说话人分离: 基于静音间隔
-    this.currentSpeaker = 0; // 0 或 1
-    this.silentSamples = 0;  // 连续静音样本数
-    this.silenceThreshold = 32000; // 2秒静音 = 说话人切换
+    // VAD 端点检测: 基于 RMS 能量的语音/静音状态机
+    this.vadState = 'silence'; // 'silence' | 'speech'
+    this.vadSilenceSamples = 0;  // 当前连续静音样本数
+    this.vadSpeechSamples = 0;   // 当前连续语音样本数
+    this.vadRmsThreshold = 300;  // RMS 能量阈值（低于 = 静音）
+    // 端点判定: 语音后静音超过此阈值 → 认为说话结束
+    this.vadEndpointSamples = liveStream ? 9600 : 16000; // 实时0.6s, 文件1s
+    // 语音起始: 需要连续语音超过此阈值才进入 speech 状态（防抖）
+    this.vadSpeechOnset = 2400; // 0.15s
+
+    // 说话人分离: 基于长静音间隔
+    this.currentSpeaker = 0;
+    this.speakerSilenceSamples = 0;
+    this.speakerSilenceThreshold = 32000; // 2秒静音 = 说话人切换
+
+    // ASR 请求并行
+    this.pendingASR = 0;
+
+    // 实时模式: 文字累积（多个 ASR 结果合并成完整句子）
+    this.accText = '';
+    this.accSegId = 0;
+    this.accStartTime = 0;
+    this.accEndTime = 0;
+    this.accFlushTimer = null; // 备用超时（VAD 失效时兜底）
   }
 
   start() {
@@ -180,39 +201,83 @@ export class StreamingASR {
     const samples = pcmBuffer.byteLength / 2;
     this.totalSamples += samples;
 
-    // 说话人分离: 检测静音间隔
+    // 计算 RMS 能量
     const int16 = new Int16Array(pcmBuffer.buffer, pcmBuffer.byteOffset, samples);
-    let energy = 0;
-    for (let i = 0; i < int16.length; i++) energy += Math.abs(int16[i]);
-    energy /= int16.length;
+    let sumSq = 0;
+    for (let i = 0; i < int16.length; i++) sumSq += int16[i] * int16[i];
+    const rms = Math.sqrt(sumSq / int16.length);
 
-    if (energy < 200) {
-      this.silentSamples += samples;
+    const isSpeech = rms >= this.vadRmsThreshold;
+
+    // 说话人分离: 长静音检测
+    if (!isSpeech) {
+      this.speakerSilenceSamples += samples;
     } else {
-      // 静音超过阈值 → 切换说话人
-      if (this.silentSamples >= this.silenceThreshold) {
+      if (this.speakerSilenceSamples >= this.speakerSilenceThreshold) {
         this.currentSpeaker = 1 - this.currentSpeaker;
         console.log(`[ASR] 说话人切换 → Speaker ${this.currentSpeaker}`);
       }
-      this.silentSamples = 0;
+      this.speakerSilenceSamples = 0;
     }
 
+    // VAD 状态机
+    if (this.vadState === 'silence') {
+      if (isSpeech) {
+        this.vadSpeechSamples += samples;
+        this.vadSilenceSamples = 0;
+        if (this.vadSpeechSamples >= this.vadSpeechOnset) {
+          this.vadState = 'speech';
+        }
+      } else {
+        this.vadSpeechSamples = 0;
+        this.vadSilenceSamples += samples;
+      }
+    } else {
+      // vadState === 'speech'
+      if (isSpeech) {
+        this.vadSilenceSamples = 0;
+      } else {
+        this.vadSilenceSamples += samples;
+        // 端点检测: 语音后足够长的静音 → 切分
+        if (this.vadSilenceSamples >= this.vadEndpointSamples) {
+          this.vadState = 'silence';
+          this.vadSpeechSamples = 0;
+          // 立即处理当前缓冲区的音频（含语音 + 尾部静音）
+          if (this.totalSamples >= this.minSamples && !this.processing) {
+            this._processChunk();
+          }
+          // 实时模式: VAD 端点也触发文字提交
+          if (this.liveStream && this.accText) {
+            this._flushAccumulated();
+          }
+          return; // 已处理，不走下面的定时触发
+        }
+      }
+    }
+
+    // 定时触发: 音频积累超过阈值时也处理（防止长句无停顿）
     if (this.totalSamples >= this.chunkThreshold && !this.processing) {
       this._processChunk();
     }
   }
 
   async flush() {
-    while (this.processing) {
+    while (this.processing || this.pendingASR > 0) {
       await new Promise(r => setTimeout(r, 100));
     }
     if (this.totalSamples >= this.minSamples) {
       await this._processChunk();
     }
+    // 等待所有并行 ASR 完成后，提交累积的文字
+    while (this.pendingASR > 0) {
+      await new Promise(r => setTimeout(r, 100));
+    }
+    this._flushAccumulated();
   }
 
   stop() {
     this.active = false;
+    this._flushAccumulated();
     this.flush();
   }
 
@@ -220,52 +285,113 @@ export class StreamingASR {
     if (this.pcmChunks.length === 0) return;
     this.processing = true;
 
-    // 取出当前所有缓冲
+    // 快照并清空缓冲区，允许后续音频继续积累
     const chunks = this.pcmChunks;
     this.pcmChunks = [];
     this.totalSamples = 0;
 
     const pcmData = Buffer.concat(chunks);
 
-    // 能量检测
+    // RMS 能量检测
     const int16 = new Int16Array(pcmData.buffer, pcmData.byteOffset, pcmData.byteLength / 2);
-    let energy = 0;
-    for (let i = 0; i < int16.length; i++) {
-      energy += Math.abs(int16[i]);
-    }
-    energy /= int16.length;
-    if (energy < 200) {
+    let sumSq = 0;
+    for (let i = 0; i < int16.length; i++) sumSq += int16[i] * int16[i];
+    const rms = Math.sqrt(sumSq / int16.length);
+
+    const sampleCount = pcmData.byteLength / 2;
+
+    if (rms < this.vadRmsThreshold) {
+      // 静音块，跳过
+      this.processedSamples += sampleCount;
       this.processing = false;
       return;
     }
 
-    // 计算时间戳
-    const sampleCount = pcmData.byteLength / 2;
+    // 计算时间戳，分配 segId
     const startTime = this.processedSamples / 16000;
     this.processedSamples += sampleCount;
     const endTime = this.processedSamples / 16000;
-
     this.segId++;
     const segId = this.segId;
 
-    // 发送 interim 占位(灰色 "...")
-    this.onInterim?.(segId, '', '...');
+    // 显示 interim 占位（实时模式用累积 segId）
+    const interimId = this.liveStream && this.accText ? this.accSegId : segId;
+    this.onInterim?.(interimId, this.liveStream ? this.accText : '', '...');
 
-    // 识别
-    const wav = pcm16ToWav(pcmData);
-    const rawText = await transcribeWav(wav, this.sourceLang);
-    const text = cleanASRText(rawText);
-
-    if (text) {
-      console.log(`[ASR] seg${segId} (S${this.currentSpeaker}): "${text}" [${startTime.toFixed(1)}s-${endTime.toFixed(1)}s]`);
-      this.onFinal?.(segId, text, startTime, endTime, this.currentSpeaker);
-    }
-
+    // 释放 processing 锁，允许下一块并行处理
     this.processing = false;
+
+    // 异步 ASR 调用（并行）
+    this.pendingASR++;
+    try {
+      const wav = pcm16ToWav(pcmData);
+      const rawText = await transcribeWav(wav, this.sourceLang);
+      const text = cleanASRText(rawText);
+
+      if (text) {
+        if (this.liveStream) {
+          // 实时模式: 累积文字，检测句子边界后才触发翻译
+          this._accumulateText(text, startTime, endTime);
+        } else {
+          console.log(`[ASR] seg${segId} (S${this.currentSpeaker}): "${text}" [${startTime.toFixed(1)}s-${endTime.toFixed(1)}s]`);
+          this.onFinal?.(segId, text, startTime, endTime, this.currentSpeaker);
+        }
+      }
+    } finally {
+      this.pendingASR--;
+    }
 
     // 处理完后检查是否有新积累的数据
     if (this.totalSamples >= this.chunkThreshold) {
       this._processChunk();
     }
+  }
+
+  _accumulateText(text, startTime, endTime) {
+    // 首次累积: 分配新 segId
+    if (!this.accText) {
+      this.accSegId = this.segId;
+      this.accStartTime = startTime;
+    }
+    // 拼接文字（英文加空格，中日韩不加）
+    if (this.accText && /[a-zA-Z]$/.test(this.accText) && /^[a-zA-Z]/.test(text)) {
+      this.accText += ' ' + text;
+    } else {
+      this.accText += text;
+    }
+    this.accEndTime = endTime;
+
+    // 显示 interim（让用户看到文字逐步增长）
+    this.onInterim?.(this.accSegId, this.accText, '');
+
+    // 检测句子结束: 英文 .!? 或中文。！？
+    const endsWithSentence = /[.!?。！？][\s"'））》」]*$/.test(this.accText.trim());
+
+    // 重置超时计时器
+    if (this.accFlushTimer) clearTimeout(this.accFlushTimer);
+
+    if (endsWithSentence) {
+      // 句子结束，立即提交
+      this._flushAccumulated();
+    } else {
+      // 兜底超时: VAD 会主动触发，这里只是防止极端情况无限等待
+      this.accFlushTimer = setTimeout(() => this._flushAccumulated(), 4000);
+    }
+  }
+
+  _flushAccumulated() {
+    if (this.accFlushTimer) { clearTimeout(this.accFlushTimer); this.accFlushTimer = null; }
+    if (!this.accText) return;
+
+    const text = this.accText;
+    const segId = this.accSegId;
+    const startTime = this.accStartTime;
+    const endTime = this.accEndTime;
+
+    console.log(`[ASR] seg${segId} (S${this.currentSpeaker}): "${text}" [${startTime.toFixed(1)}s-${endTime.toFixed(1)}s]`);
+    this.onFinal?.(segId, text, startTime, endTime, this.currentSpeaker);
+
+    // 清空累积
+    this.accText = '';
   }
 }

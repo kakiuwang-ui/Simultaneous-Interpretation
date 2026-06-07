@@ -26,6 +26,51 @@ const __dirname = __server_dir;
 const WEB_DIR = path.join(__dirname, '..', 'web');
 const PORT = process.env.PORT || 8787;
 
+// ---------- yt-dlp + ffmpeg: 在线视频 URL → 实时 PCM 流 ----------
+function streamUrlAudio(url) {
+  // yt-dlp 提取最佳音频流 URL, ffmpeg 转码为 16kHz PCM16 单声道
+  const ytdlp = spawn('yt-dlp', [
+    '-f', 'bestaudio',
+    '--no-playlist',
+    '-o', '-',          // 输出到 stdout
+    url,
+  ], { stdio: ['ignore', 'pipe', 'pipe'] });
+
+  const ff = spawn('ffmpeg', [
+    '-i', 'pipe:0',     // 从 stdin 读取
+    '-vn',
+    '-acodec', 'pcm_s16le',
+    '-ar', '16000',
+    '-ac', '1',
+    '-f', 's16le',
+    'pipe:1',
+  ], { stdio: ['pipe', 'pipe', 'pipe'] });
+
+  ytdlp.stdout.pipe(ff.stdin);
+
+  ytdlp.stderr.on('data', (d) => {
+    const line = d.toString().trim();
+    if (line) console.log('[yt-dlp]', line);
+  });
+  ff.stderr.on('data', () => {}); // suppress ffmpeg logs
+
+  const cleanup = () => {
+    try { ytdlp.kill(); } catch (e) {}
+    try { ff.kill(); } catch (e) {}
+  };
+
+  ytdlp.on('error', (err) => {
+    console.error('[yt-dlp] 启动失败:', err.message);
+    cleanup();
+  });
+  ff.on('error', (err) => {
+    console.error('[ffmpeg] 启动失败:', err.message);
+    cleanup();
+  });
+
+  return { pcmStream: ff.stdout, cleanup, ytdlp, ff };
+}
+
 // ---------- ffmpeg 转码: 任意音视频 -> 16kHz PCM16 ----------
 function convertToPCM(inputPath) {
   return new Promise((resolve, reject) => {
@@ -102,6 +147,7 @@ wss.on('connection', (ws) => {
   let translator = null;
   let asr = null;
   let pendingVoiceSample = null; // 等待接收的语音样本二进制数据
+  let urlStream = null; // URL 模式的音频流
 
   const send = (msg) => { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg)); };
 
@@ -110,7 +156,11 @@ wss.on('connection', (ws) => {
   // 翻译已定稿原文,广播译文 + 修正 + TTS 音频
   async function translateAndEmit(segId, sourceText) {
     if (!translator) return;
-    const { target, corrections } = await translator.translate(segId, sourceText);
+    // 流式翻译: 逐步发送 partial 译文
+    const onPartial = (partial) => {
+      send({ type: 'translation_partial', id: segId, partial });
+    };
+    const { target, corrections } = await translator.translate(segId, sourceText, onPartial);
     const transMsg = { type: 'translation', id: segId, source: sourceText, target };
     send(transMsg);
     broadcastToOverlays(transMsg);
@@ -161,12 +211,14 @@ wss.on('connection', (ws) => {
         const dir = msg.direction || 'en2zh';
         const serverASR = isASRConfigured();
         const isFile = msg.mode === 'file';
+        const isTab = msg.mode === 'tab';
         translator = new RollingTranslator({ direction: dir });
 
-        // 文件模式用服务器 ASR; 实时麦克风模式用浏览器 Web Speech API(逐词显示、低延迟)
-        if (isFile && serverASR) {
+        // 文件/标签页模式用服务器 ASR; 实时麦克风模式用浏览器 Web Speech API(逐词显示、低延迟)
+        if ((isFile || isTab) && serverASR) {
           asr = new StreamingASR({
             direction: dir,
+            liveStream: isTab,
             onInterim: (segId, committed, pending) => {
               send({ type: 'asr_partial', id: segId, committed, pending });
             },
@@ -180,8 +232,9 @@ wss.on('connection', (ws) => {
           asr.start();
         }
 
-        const asrMode = (isFile && serverASR) ? 'server' : 'browser';
-        console.log(`[ws] 会话开始, 翻译: ${mode}, 方向: ${dir}, 模式: ${isFile ? 'file' : 'live'}, ASR: ${asrMode === 'server' ? (process.env.ASR_PROVIDER || 'siliconflow') : 'browser'}, TTS: ${serverTTS ? 'server' : 'browser'}`);
+        const asrMode = ((isFile || isTab) && serverASR) ? 'server' : 'browser';
+        const modeLabel = isFile ? 'file' : isTab ? 'tab' : 'live';
+        console.log(`[ws] 会话开始, 翻译: ${mode}, 方向: ${dir}, 模式: ${modeLabel}, ASR: ${asrMode === 'server' ? (process.env.ASR_PROVIDER || 'siliconflow') : 'browser'}, TTS: ${serverTTS ? 'server' : 'browser'}`);
         send({ type: 'ready', mode, asrMode, ttsMode: serverTTS ? 'server' : 'browser' });
         break;
       }
@@ -229,6 +282,78 @@ wss.on('connection', (ws) => {
         }
         break;
 
+      case 'start_url': {
+        // 在线视频 URL 模式: yt-dlp + ffmpeg 提取音频 → 服务器 ASR
+        const urlDir = msg.direction || 'en2zh';
+        const videoUrl = (msg.url || '').trim();
+        if (!videoUrl) { send({ type: 'error', message: 'URL 不能为空' }); break; }
+
+        const serverASR2 = isASRConfigured();
+        if (!serverASR2) { send({ type: 'error', message: '服务器 ASR 未配置 (需要 ASR_API_KEY)' }); break; }
+
+        const mode2 = process.env.MT_PROVIDER || 'deepseek';
+        translator = new RollingTranslator({ direction: urlDir });
+        asr = new StreamingASR({
+          direction: urlDir,
+          liveStream: true,
+          onInterim: (segId, committed, pending) => {
+            send({ type: 'asr_partial', id: segId, committed, pending });
+          },
+          onFinal: (segId, text, startTime, endTime, speaker) => {
+            const asrMsg = { type: 'asr_final', id: segId, text, startTime, endTime, speaker };
+            send(asrMsg);
+            broadcastToOverlays(asrMsg);
+            translateAndEmit(segId, text);
+          },
+        });
+        asr.start();
+
+        console.log(`[ws] URL 模式开始, 方向: ${urlDir}, URL: ${videoUrl}`);
+        send({ type: 'ready', mode: mode2, asrMode: 'server', ttsMode: serverTTS ? 'server' : 'browser' });
+        send({ type: 'url_status', status: 'extracting', message: '正在提取音频流...' });
+
+        // 启动 yt-dlp + ffmpeg 流
+        urlStream = streamUrlAudio(videoUrl);
+
+        urlStream.ytdlp.on('close', (code) => {
+          if (code !== 0) {
+            send({ type: 'url_status', status: 'error', message: `yt-dlp 提取失败 (code ${code})，请检查 URL` });
+          }
+        });
+
+        let urlStarted = false;
+        urlStream.pcmStream.on('data', (chunk) => {
+          if (!urlStarted) {
+            urlStarted = true;
+            send({ type: 'url_status', status: 'streaming', message: '正在实时翻译...' });
+          }
+          if (asr) asr.pushAudio(chunk);
+        });
+
+        urlStream.pcmStream.on('end', () => {
+          console.log('[ws] URL 音频流结束');
+          if (asr) asr.flush();
+          send({ type: 'url_status', status: 'done', message: '音频流已结束' });
+          urlStream = null;
+        });
+
+        urlStream.pcmStream.on('error', () => {
+          send({ type: 'url_status', status: 'error', message: '音频流读取错误' });
+          urlStream = null;
+        });
+
+        break;
+      }
+
+      case 'stop_url':
+        if (urlStream) {
+          urlStream.cleanup();
+          urlStream = null;
+        }
+        if (asr) { asr.flush(); asr.stop(); asr = null; }
+        console.log('[ws] URL 模式已停止');
+        break;
+
       case 'file_done':
         console.log('[ws] 文件音频传输完成');
         if (asr) asr.flush();
@@ -237,6 +362,7 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
+    if (urlStream) { urlStream.cleanup(); urlStream = null; }
     if (asr) asr.stop();
     clearVoiceReference(sessionId);
     overlayClients.delete(ws);

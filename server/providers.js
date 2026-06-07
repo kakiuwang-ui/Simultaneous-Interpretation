@@ -320,9 +320,9 @@ export class RollingTranslator {
     this.feedbacks = []; // 用户反馈: [{ id, source, target }]
   }
 
-  async translate(id, sourceText) {
+  async translate(id, sourceText, onPartial) {
     const context = this.history.slice(-this.contextSize);
-    const result = await translateLLM(sourceText, context, this.direction, this.glossary, this.feedbacks);
+    const result = await translateLLM(sourceText, context, this.direction, this.glossary, this.feedbacks, onPartial);
     this.history.push({ id, source: sourceText, target: result.target });
 
     // 提取术语对照并更新术语表
@@ -352,7 +352,7 @@ export class RollingTranslator {
   }
 }
 
-async function translateLLM(sourceText, context, direction = 'en2zh', glossary = null, feedbacks = null) {
+async function translateLLM(sourceText, context, direction = 'en2zh', glossary = null, feedbacks = null, onPartial = null) {
   console.log(`[MT] 翻译方向: ${direction}, 原文: "${sourceText.slice(0, 50)}"`);
   const cfg = getLLMConfig();
   if (!cfg.apiKey) {
@@ -363,6 +363,7 @@ async function translateLLM(sourceText, context, direction = 'en2zh', glossary =
   const url = `${cfg.baseUrl}/chat/completions`;
   const body = {
     model: cfg.model,
+    stream: !!onPartial,
     messages: [
       { role: 'system', content: SYSTEM_PROMPTS[direction] || SYSTEM_PROMPTS.en2zh },
       { role: 'user', content: buildUserPrompt(sourceText, context, direction, glossary, feedbacks) },
@@ -386,9 +387,54 @@ async function translateLLM(sourceText, context, direction = 'en2zh', glossary =
       return { target: `「${sourceText}」`, corrections: [], terms: [] };
     }
 
-    const data = await res.json();
-    const content = data.choices?.[0]?.message?.content || '';
-    console.log(`[MT] LLM 原始返回 (${direction}): ${content.slice(0, 200)}`);
+    let content = '';
+
+    if (onPartial && body.stream) {
+      // 流式读取 SSE，逐步提取 target 字段
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let lastPartial = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        // 解析 SSE 行
+        const lines = buffer.split('\n');
+        buffer = lines.pop(); // 保留不完整行
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const data = line.slice(6).trim();
+          if (data === '[DONE]') continue;
+          try {
+            const chunk = JSON.parse(data);
+            const delta = chunk.choices?.[0]?.delta?.content || '';
+            content += delta;
+          } catch { continue; }
+
+          // 实时提取 target 值: 匹配 "target": "..." 中已出现的内容
+          const targetMatch = content.match(/"target"\s*:\s*"((?:[^"\\]|\\.)*)(?:"|$)/);
+          if (targetMatch) {
+            // 反转义 JSON 字符串
+            let partial;
+            try { partial = JSON.parse('"' + targetMatch[1] + '"'); } catch { partial = targetMatch[1]; }
+            if (partial && partial !== lastPartial) {
+              lastPartial = partial;
+              onPartial(partial);
+            }
+          }
+        }
+      }
+    } else {
+      // 非流式
+      const data = await res.json();
+      content = data.choices?.[0]?.message?.content || '';
+    }
+
+    console.log(`[MT] LLM 返回 (${direction}): ${content.slice(0, 200)}`);
 
     // 提取 JSON(兼容模型返回 ```json ... ``` 包裹的情况)
     const jsonStr = content.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();

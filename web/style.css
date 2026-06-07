@@ -243,6 +243,33 @@ body {
   border-radius: 2px; transition: width 0.3s;
 }
 
+/* ---------------- URL 输入栏 ---------------- */
+.url-input-row {
+  display: flex; gap: 8px; align-items: center;
+}
+.url-input {
+  flex: 1;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+}
+.url-input:focus {
+  border-color: var(--muted);
+  background: rgba(255, 255, 255, 0.1);
+}
+.url-input::placeholder { color: var(--faint); }
+.btn-sm { padding: 7px 14px; font-size: 12px; }
+#urlBtn.active {
+  background: rgba(80, 200, 120, 0.1);
+  border-color: rgba(80, 200, 120, 0.3);
+  color: var(--live);
+}
+
 /* ---------------- 字幕舞台 ---------------- */
 .stage {
   flex: 1;
@@ -347,6 +374,15 @@ body {
   box-shadow: inset 3px 0 0 var(--live);
 }
 
+/* 流式翻译中 */
+.line.is-partial .committed { color: var(--pending); }
+.line.is-partial .committed::after {
+  content: ""; display: inline-block;
+  width: 2px; height: 0.9em; margin-left: 2px;
+  background: var(--muted); vertical-align: text-bottom;
+  animation: blink 1s steps(2) infinite;
+}
+
 /* 可编辑提示 */
 .line.is-final { cursor: text; }
 .line.is-final:hover { background: rgba(255, 255, 255, 0.04); }
@@ -378,6 +414,13 @@ body {
 .line:hover .feedback-btn { opacity: 0.5; }
 .feedback-btn:hover { opacity: 1 !important; background: rgba(255,255,255,0.08); }
 .feedback-btn.sent { opacity: 1; color: var(--live); }
+
+/* 标签页音频按钮激活态 */
+#tabAudioBtn.active {
+  background: rgba(80, 200, 120, 0.1);
+  border-color: rgba(80, 200, 120, 0.3);
+  color: var(--live);
+}
 
 /* 说话人分离颜色 */
 .line.speaker-0 { border-left: 3px solid #6a9ef5; padding-left: 12px; }
