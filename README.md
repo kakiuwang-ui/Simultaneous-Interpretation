@@ -2,6 +2,9 @@
 
 实时语音识别 + LLM 翻译 + 自动修正 + 声音克隆，支持中英日韩多语言同声传译。
 
+## 项目演示地址
+https://www.bilibili.com/video/BV1MEEt6zEKa/
+
 ## 功能特性
 
 - **实时语音识别**：麦克风实时收音 → 浏览器 Web Speech API（逐词显示、低延迟）；文件上传 → 服务端 Whisper ASR（SiliconFlow SenseVoice）

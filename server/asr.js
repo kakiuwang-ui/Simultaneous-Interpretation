@@ -201,8 +201,9 @@ export class StreamingASR {
     const samples = pcmBuffer.byteLength / 2;
     this.totalSamples += samples;
 
-    // 计算 RMS 能量
-    const int16 = new Int16Array(pcmBuffer.buffer, pcmBuffer.byteOffset, samples);
+    // 计算 RMS 能量 (确保 Int16Array 对齐)
+    const aligned = pcmBuffer.byteOffset % 2 !== 0 ? Buffer.from(pcmBuffer) : pcmBuffer;
+    const int16 = new Int16Array(aligned.buffer, aligned.byteOffset, samples);
     let sumSq = 0;
     for (let i = 0; i < int16.length; i++) sumSq += int16[i] * int16[i];
     const rms = Math.sqrt(sumSq / int16.length);
