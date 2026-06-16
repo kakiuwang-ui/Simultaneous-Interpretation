@@ -14,14 +14,16 @@
 <nav>
   <a href="#hero">首页</a>
   <a href="#arch">架构</a>
+  <a href="#stack">技术栈</a>
+  <a href="#tradeoffs">选型</a>
+  <a href="#structure">结构</a>
+  <a href="#features">功能</a>
+  <a href="#rendering">渲染</a>
   <a href="#algo">算法</a>
   <a href="#correction">纠正</a>
   <a href="#latency">延迟</a>
-  <a href="#stack">技术栈</a>
-  <a href="#tradeoffs">选型</a>
+  <a href="#ws-protocol">协议</a>
   <a href="#providers">Provider</a>
-  <a href="#features">功能</a>
-  <a href="#structure">结构</a>
   <a href="#stats">数据</a>
   <a href="#cta">Demo</a>
 </nav>
@@ -144,335 +146,7 @@
 
 </section>
 
-<!-- ==================== 3. Algorithms ==================== -->
-<section id="algo">
-  <h2 class="section-title reveal">核心算法</h2>
-  <p class="section-subtitle reveal">从音频流到翻译输出的四个关键技术环节</p>
-
-  <div class="algo-grid">
-    <!-- VAD State Machine -->
-    <div class="algo-card reveal">
-      <h3>VAD 状态机</h3>
-      <div class="algo-desc">能量检测 + 双阈值端点切分，自动将连续音频流切成语句</div>
-      <div class="algo-params">
-        <div class="algo-param"><span class="lbl">采样率 </span><span class="val">16kHz</span></div>
-        <div class="algo-param"><span class="lbl">语音起始 </span><span class="val">0.15s</span></div>
-        <div class="algo-param"><span class="lbl">端点检测 </span><span class="val">0.6s</span><span class="lbl"> 实时 / </span><span class="val">1.0s</span><span class="lbl"> 文件</span></div>
-        <div class="algo-param"><span class="lbl">RMS 阈值 </span><span class="val">300</span></div>
-        <div class="algo-param"><span class="lbl">分块上限 </span><span class="val">1.5s</span><span class="lbl"> 实时 / </span><span class="val">2.5s</span><span class="lbl"> 文件</span></div>
-      </div>
-      <div class="visual">
-        <span class="gold">silence</span>
-        &nbsp;── speechSamples &ge; onset ──&gt;&nbsp;
-        <span class="accent">speech</span>
-        <br><br>
-        <span class="accent">speech</span>
-        &nbsp;── silenceSamples &ge; endpoint ──&gt;&nbsp;
-        <span class="gold">silence</span>
-      </div>
-      <pre><span class="cm">// server/asr.js:224-257 — VAD 状态机</span>
-<span class="kw">if</span> (<span class="kw">this</span>.<span class="prop">vadState</span> === <span class="str">'silence'</span>) {
-  <span class="kw">if</span> (isSpeech) {
-    <span class="kw">this</span>.<span class="prop">vadSpeechSamples</span> += samples;
-    <span class="kw">if</span> (<span class="kw">this</span>.<span class="prop">vadSpeechSamples</span> >= <span class="kw">this</span>.<span class="prop">vadSpeechOnset</span>) {
-      <span class="kw">this</span>.<span class="prop">vadState</span> = <span class="str">'speech'</span>;
-    }
-  }
-} <span class="kw">else</span> {  <span class="cm">// vadState === 'speech'</span>
-  <span class="kw">if</span> (!isSpeech) {
-    <span class="kw">this</span>.<span class="prop">vadSilenceSamples</span> += samples;
-    <span class="kw">if</span> (<span class="kw">this</span>.<span class="prop">vadSilenceSamples</span> >= <span class="kw">this</span>.<span class="prop">vadEndpointSamples</span>) {
-      <span class="kw">this</span>.<span class="prop">vadState</span> = <span class="str">'silence'</span>;
-      <span class="kw">this</span>.<span class="fn">_processChunk</span>();
-      <span class="kw">this</span>.<span class="fn">_flushAccumulated</span>();
-    }
-  }
-}</pre>
-    </div>
-
-    <!-- LocalAgreement-2 -->
-    <div class="algo-card reveal reveal-delay-1">
-      <h3>LocalAgreement-2 提交策略</h3>
-      <div class="algo-desc">连续两次 ASR 假设在前缀达成一致才定稿，平衡速度与稳定性。源自 whisper_streaming 的经典做法。</div>
-      <div class="algo-params">
-        <div class="algo-param"><span class="lbl">normalize: </span><span class="val">lowercase + 去标点</span></div>
-        <div class="algo-param"><span class="lbl">flush 触发: </span><span class="val">final 事件 / VAD 端点</span></div>
-      </div>
-      <div class="visual">
-        hypothesis<sub>t-1</sub>: <span class="gold">The quick brown</span> fox jumps<br>
-        hypothesis<sub>t</sub>&nbsp;&nbsp;: <span class="gold">The quick brown</span> fox runs<br>
-        <br>
-        <span class="accent">commit</span>: "The quick brown" &nbsp;|&nbsp; <span class="gold">pending</span>: "fox runs"
-      </div>
-      <pre><span class="cm">// server/commit.js:20-41 — LocalAgreement-2</span>
-<span class="fn">update</span>(words) {
-  <span class="kw">const</span> newlyCommitted = [];
-  <span class="kw">const</span> start = <span class="kw">this</span>.<span class="prop">committed</span>.length;
-  <span class="kw">let</span> i = start;
-  <span class="kw">while</span> (
-    i &lt; words.length &amp;&amp;
-    i &lt; <span class="kw">this</span>.<span class="prop">prevHypothesis</span>.length &amp;&amp;
-    <span class="fn">normalize</span>(words[i]) === <span class="fn">normalize</span>(<span class="kw">this</span>.<span class="prop">prevHypothesis</span>[i])
-  ) {
-    newlyCommitted.<span class="fn">push</span>(words[i]);
-    i++;
-  }
-  <span class="kw">this</span>.<span class="prop">committed</span>.<span class="fn">push</span>(...newlyCommitted);
-  <span class="kw">this</span>.<span class="prop">prevHypothesis</span> = words;
-  <span class="kw">return</span> { <span class="prop">committed</span>, <span class="prop">pending</span>, <span class="prop">newlyCommitted</span> };
-}</pre>
-    </div>
-
-    <!-- Streaming Translation -->
-    <div class="algo-card reveal reveal-delay-2">
-      <h3>流式翻译 + 自动纠正</h3>
-      <div class="algo-desc">滑动窗口上下文 + JSON 结构化输出，支持回溯纠正已发译文</div>
-      <div class="algo-params">
-        <div class="algo-param"><span class="lbl">上下文窗口 </span><span class="val">8 句</span></div>
-        <div class="algo-param"><span class="lbl">术语表上限 </span><span class="val">30 条</span><span class="lbl"> FIFO</span></div>
-        <div class="algo-param"><span class="lbl">用户反馈 </span><span class="val">3 条</span></div>
-        <div class="algo-param"><span class="lbl">流式提取 </span><span class="val">Regex 匹配不完整 JSON</span></div>
-      </div>
-      <div class="visual" style="text-align:left; font-size:12px;">
-        <span class="cm">// 8-sentence sliding context window</span><br>
-        context[0]: "Previous sentence..."<br>
-        context[1]: "Another sentence..."<br>
-        context[2]: "More context..."<br>
-        <span class="accent">current</span>: "New input to translate"
-      </div>
-      <pre><span class="cm">// 翻译 Prompt 要求 JSON 输出结构</span>
-{
-  <span class="prop">"target"</span>: <span class="str">"本句的中文翻译"</span>,
-  <span class="prop">"corrections"</span>: [
-    {<span class="prop">"id"</span>: <span class="num">句子编号</span>, <span class="prop">"target"</span>: <span class="str">"修正后的译文"</span>}
-  ],
-  <span class="prop">"terms"</span>: [
-    {<span class="prop">"src"</span>: <span class="str">"原文术语"</span>, <span class="prop">"tgt"</span>: <span class="str">"译文术语"</span>}
-  ]
-}</pre>
-    </div>
-
-    <!-- Voice Cloning -->
-    <div class="algo-card reveal reveal-delay-3">
-      <h3>声音克隆 TTS</h3>
-      <div class="algo-desc">零样本声音克隆：5 秒采样即可复刻说话人音色，用克隆音色播报译文</div>
-      <div class="algo-params">
-        <div class="algo-param"><span class="lbl">采样 </span><span class="val">5s</span><span class="lbl"> = 80000 samples @16kHz</span></div>
-        <div class="algo-param"><span class="lbl">模型 </span><span class="val">CosyVoice2-0.5B</span></div>
-        <div class="algo-param"><span class="lbl">分段 </span><span class="val">&le;50 字符</span><span class="lbl"> 只合成首段</span></div>
-        <div class="algo-param"><span class="lbl">输出 </span><span class="val">MP3</span></div>
-        <div class="algo-param"><span class="lbl">降级 </span><span class="val">预设音色 / speechSynthesis</span></div>
-      </div>
-      <div class="visual" style="text-align:left; font-size:12px; line-height:2.2;">
-        <strong>Step 1 — 浏览器端采集</strong><br>
-        &nbsp;&nbsp;麦克风前 5s PCM16 → <span class="accent">collectVoiceSample()</span> 累积到 80000 样本<br>
-        &nbsp;&nbsp;UI 显示「采集声纹 xx%」进度，TTS 播放期间暂停采集防止回声<br>
-        <strong>Step 2 — 发送到服务端</strong><br>
-        &nbsp;&nbsp;先发 JSON: <span class="gold">{ type: 'voice_sample', sampleRate: 16000, samples: 80000 }</span><br>
-        &nbsp;&nbsp;紧接着发 <span class="gold">二进制 ArrayBuffer</span>（160KB PCM16）<br>
-        &nbsp;&nbsp;服务端用 <span class="accent">pendingVoiceSample</span> 标志位区分声纹 vs 普通音频<br>
-        <strong>Step 3 — 服务端处理</strong><br>
-        &nbsp;&nbsp;PCM16 → <span class="accent">pcm16ToWav()</span> 手动拼 44 字节 WAV 头 → Base64 → data URI<br>
-        &nbsp;&nbsp;WAV → <span class="accent">transcribeWav()</span> 调 SenseVoice ASR 得到文本 transcript<br>
-        &nbsp;&nbsp;存入 <span class="accent">sessionVoiceRefs</span> Map（会话级，断开自动清理）<br>
-        <strong>Step 4 — 克隆合成</strong><br>
-        &nbsp;&nbsp;翻译完成 → <span class="accent">synthesize(text, sessionId)</span><br>
-        &nbsp;&nbsp;长文本按标点拆分（<span class="gold">/[。！？；，、.!?;,]/</span>），只合成第一段降低延迟<br>
-        &nbsp;&nbsp;有 voiceRef → <span class="accent">references</span> 数组克隆；无 → 预设音色 fallback<br>
-        <strong>Step 5 — 浏览器播放</strong><br>
-        &nbsp;&nbsp;服务端发 tts_audio JSON + MP3 二进制 → Blob → <span class="accent">new Audio()</span> 播放<br>
-        &nbsp;&nbsp;播放期间暂停 Web Speech API + 静音麦克风 PCM 防止回声循环
-      </div>
-      <pre><span class="cm">// server/tts.js — CosyVoice2 克隆 API 调用</span>
-{
-  <span class="prop">"model"</span>: <span class="str">"FunAudioLLM/CosyVoice2-0.5B"</span>,
-  <span class="prop">"input"</span>: <span class="str">"要合成的译文（首段 &le;50 字符）"</span>,
-  <span class="prop">"references"</span>: [{
-    <span class="prop">"audio"</span>: <span class="str">"data:audio/wav;base64,UklGR..."</span>,
-    <span class="prop">"text"</span>:  <span class="str">"ASR 转录的参考音频文本"</span>
-  }],
-  <span class="prop">"response_format"</span>: <span class="str">"mp3"</span>
-}
-<span class="cm">// 注意: voice 和 references 互斥</span>
-<span class="cm">// 克隆失败时自动降级为 synthesizeWithVoice(预设音色)</span></pre>
-    </div>
-  </div>
-</section>
-
-<!-- ==================== 3.5 Auto-Correction Pipeline ==================== -->
-<section id="correction">
-  <h2 class="section-title reveal">自动纠正机制</h2>
-  <p class="section-subtitle reveal">四层纠正管线 — 从语音识别到人工校对，层层保证译文质量</p>
-
-  <div class="correction-pipeline">
-    <!-- Layer 1: ASR -->
-    <div class="correction-layer reveal">
-      <span class="layer-badge l1">Layer 1 — ASR 级</span>
-      <h4>语音假设逐步稳定</h4>
-      <div class="layer-desc">
-        <p>Web Speech API 逐词输出 interim hypothesis，文字不断跳动修正。
-        <strong>LocalAgreement-2</strong> 算法：只有连续两次假设在前缀达成一致才定稿提交，其余留作灰色临时区。</p>
-        <div class="feat-flow" style="margin-top:12px;">
-          <span class="step">interim: "I think we should"</span>
-          <span class="arrow">→</span>
-          <span class="step">interim: "I think we should go"</span>
-          <span class="arrow">→</span>
-          <span class="step" style="border-color:var(--green);">commit: "I think we should"</span>
-        </div>
-        <p style="margin-top:8px;">服务端 ASR（SenseVoice/Whisper）同理：VAD 分块 → 整段识别 → 文字累积 → 句边界检测后 flush 定稿。</p>
-      </div>
-    </div>
-
-    <div class="correction-connector"></div>
-
-    <!-- Layer 2: LLM Translation Correction -->
-    <div class="correction-layer reveal reveal-delay-1">
-      <span class="layer-badge l2">Layer 2 — LLM 翻译回改</span>
-      <h4>上下文感知回溯修正</h4>
-      <div class="layer-desc">
-        <p><strong>8 句滑动窗口</strong>作为上下文注入 Prompt。LLM 翻译当前句的同时，输出 <strong>corrections[]</strong> 数组回溯修改之前已发布的译文。
-        典型场景：后文出现消歧信息后，LLM 自动修正前句的错误翻译。</p>
-        <pre><span class="cm">// LLM 输出 JSON 结构</span>
-{
-  <span class="prop">"target"</span>: <span class="str">"当前句的译文"</span>,
-  <span class="prop">"corrections"</span>: [
-    {<span class="prop">"id"</span>: <span class="val">3</span>, <span class="prop">"target"</span>: <span class="str">"修正后的第3句译文"</span>},
-    {<span class="prop">"id"</span>: <span class="val">5</span>, <span class="prop">"target"</span>: <span class="str">"修正后的第5句译文"</span>}
-  ],
-  <span class="prop">"terms"</span>: [{<span class="prop">"src"</span>: <span class="str">"术语"</span>, <span class="prop">"tgt"</span>: <span class="str">"翻译"</span>}]
-}</pre>
-        <p style="margin-top:8px;">系统遍历 corrections 数组 → 找到对应 id 的字幕行 → 原地替换译文 → 触发 Layer 3 视觉反馈。</p>
-      </div>
-    </div>
-
-    <div class="correction-connector"></div>
-
-    <!-- Layer 3: Visual Feedback -->
-    <div class="correction-layer reveal reveal-delay-2">
-      <span class="layer-badge l3">Layer 3 — 字幕三态显示</span>
-      <h4>视觉状态即时反馈</h4>
-      <div class="layer-desc">
-        <p>每行字幕都有明确的视觉状态，用户一眼就能分辨定稿、临时和修正内容：</p>
-        <div class="subtitle-states">
-          <span class="subtitle-state final">白色 = 已定稿</span>
-          <span class="subtitle-state partial">灰色 = 临时 (is-partial)</span>
-          <span class="subtitle-state corrected">黄色闪烁 = 已修正</span>
-        </div>
-        <p style="margin-top:10px;">修正动画：<code>flash-correct</code> CSS 关键帧 <strong>1.6s</strong>，黄色高亮 + 右上角"已修正"标签。动画结束后自动移除 class。</p>
-      </div>
-    </div>
-
-    <div class="correction-connector"></div>
-
-    <!-- Layer 4: Manual Edit -->
-    <div class="correction-layer reveal reveal-delay-3">
-      <span class="layer-badge l4">Layer 4 — 人工修正</span>
-      <h4>双击编辑 → 即时重译</h4>
-      <div class="layer-desc">
-        <p>用户<strong>双击</strong>任意原文字幕行，进入 <code>contentEditable</code> 编辑模式。修改完成后自动发送重译请求：</p>
-        <div class="feat-flow" style="margin-top:10px;">
-          <span class="step">双击编辑原文</span>
-          <span class="arrow">→</span>
-          <span class="step">ws.send({type:'retranslate', id, text})</span>
-          <span class="arrow">→</span>
-          <span class="step">服务端 LLM 重译</span>
-          <span class="arrow">→</span>
-          <span class="step">译文自动更新</span>
-        </div>
-        <p style="margin-top:8px;">修改后的原文同步更新翻译上下文窗口（history[]），影响后续句子的翻译质量和术语一致性。</p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ==================== 3.6 Latency Optimization ==================== -->
-<section id="latency">
-  <h2 class="section-title reveal">延迟优化</h2>
-  <p class="section-subtitle reveal">从音频输入到字幕显示的端到端延迟拆解与优化策略</p>
-
-  <div class="latency-wrap">
-    <div class="latency-track reveal" style="overflow-x:auto;">
-      <div style="min-width:700px;">
-        <div class="latency-row">
-          <div class="latency-label">VAD 起始检测</div>
-          <div class="latency-bar-area">
-            <div class="latency-bar green" style="left:0; width:5%;">0.15s</div>
-          </div>
-        </div>
-        <div class="latency-row">
-          <div class="latency-label">音频积累</div>
-          <div class="latency-bar-area">
-            <div class="latency-bar dim" style="left:5%; width:25%;">1.5s 分块 (实时)</div>
-          </div>
-        </div>
-        <div class="latency-row">
-          <div class="latency-label">VAD 端点检测</div>
-          <div class="latency-bar-area">
-            <div class="latency-bar gold" style="left:30%; width:10%;">0.6s 静音</div>
-          </div>
-        </div>
-        <div class="latency-row">
-          <div class="latency-label">ASR 识别</div>
-          <div class="latency-bar-area">
-            <div class="latency-bar green" style="left:30%; width:18%;">并行不阻塞</div>
-          </div>
-        </div>
-        <div class="latency-row">
-          <div class="latency-label">文字累积</div>
-          <div class="latency-bar-area">
-            <div class="latency-bar dim" style="left:38%; width:12%;">句边界 / 4s 兜底</div>
-          </div>
-        </div>
-        <div class="latency-row">
-          <div class="latency-label">流式翻译</div>
-          <div class="latency-bar-area">
-            <div class="latency-bar green" style="left:50%; width:22%;">~10 字即显示</div>
-          </div>
-        </div>
-        <div class="latency-row">
-          <div class="latency-label">TTS 合成</div>
-          <div class="latency-bar-area">
-            <div class="latency-bar gold" style="left:55%; width:15%;">首段 ≤50 字</div>
-          </div>
-        </div>
-        <div class="latency-axis">
-          <span>0s</span><span>1s</span><span>2s</span><span>3s</span><span>4s</span><span>5s</span>
-        </div>
-      </div>
-    </div>
-
-    <div class="latency-mode-compare reveal">
-      <div class="latency-mode-card">
-        <h4 style="color:var(--green);">实时模式 (麦克风)</h4>
-        <div class="metric"><span>VAD 端点</span><span class="val">0.6s</span></div>
-        <div class="metric"><span>ASR 分块上限</span><span class="val">1.5s (24000 样本)</span></div>
-        <div class="metric"><span>最小 ASR 长度</span><span class="val">0.5s (8000 样本)</span></div>
-        <div class="metric"><span>并行 ASR</span><span class="val">pendingASR 计数器</span></div>
-        <div class="metric"><span>文字累积</span><span class="val">句边界检测 + 4s 兜底</span></div>
-        <div class="metric"><span>流式翻译首字</span><span class="val">Regex 提取 ~10 字符即显</span></div>
-        <div class="metric"><span>TTS 策略</span><span class="val">首段 ≤50 字符, 省 ~70%</span></div>
-      </div>
-      <div class="latency-mode-card">
-        <h4 style="color:var(--gold);">文件模式 (上传 / URL)</h4>
-        <div class="metric"><span>VAD 端点</span><span class="val">1.0s</span></div>
-        <div class="metric"><span>ASR 分块上限</span><span class="val">2.5s (40000 样本)</span></div>
-        <div class="metric"><span>最小 ASR 长度</span><span class="val">0.8s (12800 样本)</span></div>
-        <div class="metric"><span>文件分块发送</span><span class="val">0.5s 块 @ 100ms 间隔</span></div>
-        <div class="metric"><span>文字累积</span><span class="val">同上</span></div>
-        <div class="metric"><span>流式翻译首字</span><span class="val">同上</span></div>
-        <div class="metric"><span>TTS 策略</span><span class="val">同上</span></div>
-      </div>
-    </div>
-
-    <div class="algo-params reveal" style="margin-top:24px; justify-content:center;">
-      <div class="algo-param"><span class="lbl">关键优化: </span><span class="val">ASR 并行</span><span class="lbl"> — pendingASR 计数器, 管线不阻塞等待上一次识别</span></div>
-      <div class="algo-param"><span class="lbl">流式提取: </span><span class="val">Regex</span><span class="lbl"> 匹配不完整 JSON 的 "target" 字段, 边生成边显示</span></div>
-      <div class="algo-param"><span class="lbl">TTS 拆分: </span><span class="val">splitLongText()</span><span class="lbl"> 按标点拆段, 仅合成首段降低延迟</span></div>
-    </div>
-  </div>
-</section>
-
-<!-- ==================== 4. Tech Stack ==================== -->
+<!-- ==================== 3. Tech Stack ==================== -->
 <section id="stack">
   <h2 class="section-title reveal">技术栈</h2>
   <p class="section-subtitle reveal">零前端框架依赖，纯 Vanilla JS + Node.js 服务端</p>
@@ -542,7 +216,7 @@
   <div class="badge reveal">零前端依赖 — No React, No Vue, No Webpack</div>
 </section>
 
-<!-- ==================== 5. Tech Tradeoffs ==================== -->
+<!-- ==================== 4. Tech Tradeoffs ==================== -->
 <section id="tradeoffs">
   <h2 class="section-title reveal">技术选型</h2>
   <p class="section-subtitle reveal">每个决策背后的权衡 — 为什么选它而不是别的</p>
@@ -624,96 +298,28 @@
   </div>
 </section>
 
-<!-- ==================== 5.5 Multi-Provider Architecture ==================== -->
-<section id="providers">
-  <h2 class="section-title reveal">多 Provider 架构</h2>
-  <p class="section-subtitle reveal">统一抽象层，支持多提供商一键切换 + 自动降级，均使用 OpenAI 兼容 API 格式</p>
+<!-- ==================== 5. Project Structure ==================== -->
+<section id="structure" style="min-height:auto;">
+  <h2 class="section-title reveal">项目结构</h2>
+  <p class="section-subtitle reveal">极简文件组织 — 10 个核心文件，3 行配置即可运行</p>
 
-  <div class="provider-grid">
-    <!-- LLM Column -->
-    <div class="provider-col reveal">
-      <h3>LLM 翻译 <span style="color:var(--text-dim); font-size:13px; font-weight:400;">(5+1 提供商)</span></h3>
-      <div class="provider-item">
-        <span class="p-name">DeepSeek</span>
-        <span class="p-model">deepseek-chat</span>
-        <span class="p-tag default">默认</span>
-      </div>
-      <div class="provider-item">
-        <span class="p-name">通义千问</span>
-        <span class="p-model">qwen-plus</span>
-      </div>
-      <div class="provider-item">
-        <span class="p-name">Kimi</span>
-        <span class="p-model">moonshot-v1-8k</span>
-      </div>
-      <div class="provider-item">
-        <span class="p-name">OpenAI</span>
-        <span class="p-model">gpt-4o-mini</span>
-      </div>
-      <div class="provider-item">
-        <span class="p-name">智谱</span>
-        <span class="p-model">glm-4-flash</span>
-      </div>
-      <div class="provider-arrow">↓ 或自定义 ↓</div>
-      <div class="provider-item">
-        <span class="p-name">Custom</span>
-        <span class="p-model">任意 OpenAI 兼容 API</span>
-        <span class="p-tag fallback">自定义</span>
-      </div>
-      <div class="provider-env">MT_PROVIDER=deepseek<br>LLM_API_KEY=sk-...<br>LLM_BASE_URL=https://...</div>
-    </div>
-
-    <!-- ASR Column -->
-    <div class="provider-col reveal reveal-delay-1">
-      <h3>ASR 语音识别 <span style="color:var(--text-dim); font-size:13px; font-weight:400;">(3 + 浏览器)</span></h3>
-      <div class="provider-item">
-        <span class="p-name">SiliconFlow</span>
-        <span class="p-model">SenseVoice</span>
-        <span class="p-tag default">默认</span>
-      </div>
-      <div class="provider-item">
-        <span class="p-name">Groq</span>
-        <span class="p-model">whisper-large-v3</span>
-      </div>
-      <div class="provider-item">
-        <span class="p-name">OpenAI</span>
-        <span class="p-model">whisper-1</span>
-      </div>
-      <div class="provider-arrow">↓ fallback ↓</div>
-      <div class="provider-item">
-        <span class="p-name">浏览器</span>
-        <span class="p-model">Web Speech API</span>
-        <span class="p-tag fallback">降级</span>
-      </div>
-      <div class="provider-env">ASR_PROVIDER=siliconflow<br>ASR_API_KEY=sk-...<br>ASR_BASE_URL=https://...</div>
-    </div>
-
-    <!-- TTS Column -->
-    <div class="provider-col reveal reveal-delay-2">
-      <h3>TTS 语音合成 <span style="color:var(--text-dim); font-size:13px; font-weight:400;">(2 + 浏览器)</span></h3>
-      <div class="provider-item">
-        <span class="p-name">SiliconFlow</span>
-        <span class="p-model">CosyVoice2-0.5B</span>
-        <span class="p-tag default">默认</span>
-      </div>
-      <div class="provider-item" style="padding-left:100px; font-size:12px; color:var(--text-dim);">
-        支持零样本声音克隆 (references[])
-      </div>
-      <div class="provider-item">
-        <span class="p-name">OpenAI</span>
-        <span class="p-model">tts-1</span>
-      </div>
-      <div class="provider-arrow">↓ fallback ↓</div>
-      <div class="provider-item">
-        <span class="p-name">浏览器</span>
-        <span class="p-model">speechSynthesis</span>
-        <span class="p-tag fallback">降级</span>
-      </div>
-      <div class="provider-env">TTS_PROVIDER=siliconflow<br>TTS_API_KEY=sk-...<br>TTS_BASE_URL=https://...</div>
+  <div class="structure-wrap reveal">
+    <div class="file-tree">
+      <div><span style="color:#555;">├──</span> <span class="t-dir">server/</span></div>
+      <div><span style="color:#555;">│   ├──</span> <span class="t-file">server.js</span> <span class="t-cm"># HTTP + WebSocket + FFmpeg 转码 + yt-dlp 管道</span></div>
+      <div><span style="color:#555;">│   ├──</span> <span class="t-file">asr.js</span> <span class="t-cm"># 流式 ASR + VAD 状态机 + 说话人分离</span></div>
+      <div><span style="color:#555;">│   ├──</span> <span class="t-file">providers.js</span> <span class="t-cm"># LLM 翻译 + 滑动窗口 + 12 方向 Prompt</span></div>
+      <div><span style="color:#555;">│   ├──</span> <span class="t-file">tts.js</span> <span class="t-cm"># TTS 合成 + 声音克隆 + PCM→WAV</span></div>
+      <div><span style="color:#555;">│   └──</span> <span class="t-file">commit.js</span> <span class="t-cm"># LocalAgreement-2 提交策略</span></div>
+      <div><span style="color:#555;">├──</span> <span class="t-dir">web/</span></div>
+      <div><span style="color:#555;">│   ├──</span> <span class="t-file">index.html</span> <span class="t-cm"># 主页面结构</span></div>
+      <div><span style="color:#555;">│   ├──</span> <span class="t-file">app.js</span> <span class="t-cm"># 前端逻辑 (~1200 行)</span></div>
+      <div><span style="color:#555;">│   ├──</span> <span class="t-file">style.css</span> <span class="t-cm"># 黑白主题样式</span></div>
+      <div><span style="color:#555;">│   ├──</span> <span class="t-file">overlay.html</span> <span class="t-cm"># OBS 字幕叠加层 (透明背景)</span></div>
+      <div><span style="color:#555;">│   └──</span> <span class="t-file">demo.html</span> <span class="t-cm"># 本技术演示页</span></div>
+      <div><span style="color:#555;">└──</span> <span class="t-file">.env</span> <span class="t-cm"># 3 行配置即可运行</span></div>
     </div>
   </div>
-
-  <div class="badge reveal" style="margin-top:32px;">全部使用 OpenAI 兼容 API 格式 — 每个服务只需 3 个环境变量即可切换</div>
 </section>
 
 <!-- ==================== 6. Features ==================== -->
@@ -904,31 +510,732 @@
   </div>
 </section>
 
-<!-- ==================== 6.5 Project Structure ==================== -->
-<section id="structure" style="min-height:auto;">
-  <h2 class="section-title reveal">项目结构</h2>
-  <p class="section-subtitle reveal">极简文件组织 — 10 个核心文件，3 行配置即可运行</p>
+<!-- ==================== 7. Frontend Rendering ==================== -->
+<section id="rendering">
+  <h2 class="section-title reveal">前端渲染</h2>
+  <p class="section-subtitle reveal">音频频谱、双栏字幕、画中画悬浮、视频同步 — 纯 DOM 操作，零框架</p>
 
-  <div class="structure-wrap reveal">
-    <div class="file-tree">
-      <div><span style="color:#555;">├──</span> <span class="t-dir">server/</span></div>
-      <div><span style="color:#555;">│   ├──</span> <span class="t-file">server.js</span> <span class="t-cm"># HTTP + WebSocket + FFmpeg 转码 + yt-dlp 管道</span></div>
-      <div><span style="color:#555;">│   ├──</span> <span class="t-file">asr.js</span> <span class="t-cm"># 流式 ASR + VAD 状态机 + 说话人分离</span></div>
-      <div><span style="color:#555;">│   ├──</span> <span class="t-file">providers.js</span> <span class="t-cm"># LLM 翻译 + 滑动窗口 + 12 方向 Prompt</span></div>
-      <div><span style="color:#555;">│   ├──</span> <span class="t-file">tts.js</span> <span class="t-cm"># TTS 合成 + 声音克隆 + PCM→WAV</span></div>
-      <div><span style="color:#555;">│   └──</span> <span class="t-file">commit.js</span> <span class="t-cm"># LocalAgreement-2 提交策略</span></div>
-      <div><span style="color:#555;">├──</span> <span class="t-dir">web/</span></div>
-      <div><span style="color:#555;">│   ├──</span> <span class="t-file">index.html</span> <span class="t-cm"># 主页面结构</span></div>
-      <div><span style="color:#555;">│   ├──</span> <span class="t-file">app.js</span> <span class="t-cm"># 前端逻辑 (~1200 行)</span></div>
-      <div><span style="color:#555;">│   ├──</span> <span class="t-file">style.css</span> <span class="t-cm"># 黑白主题样式</span></div>
-      <div><span style="color:#555;">│   ├──</span> <span class="t-file">overlay.html</span> <span class="t-cm"># OBS 字幕叠加层 (透明背景)</span></div>
-      <div><span style="color:#555;">│   └──</span> <span class="t-file">demo.html</span> <span class="t-cm"># 本技术演示页</span></div>
-      <div><span style="color:#555;">└──</span> <span class="t-file">.env</span> <span class="t-cm"># 3 行配置即可运行</span></div>
+  <!-- Audio Spectrum (first, with live demo) -->
+  <div class="feat-detail reveal">
+    <div class="feat-header">
+      <div class="icon">&#127926;</div>
+      <h3>音频频谱可视化</h3>
+      <span class="feat-badge">Canvas + AnalyserNode</span>
+    </div>
+    <div class="feat-body">
+      <!-- Live spectrum demo -->
+      <div class="spectrum-demo">
+        <canvas id="demoSpectrum"></canvas>
+        <button id="spectrumBtn" class="spectrum-btn">点击开启麦克风频谱</button>
+        <p class="spectrum-hint" id="spectrumHint"></p>
+      </div>
+
+      <div class="feat-flow">
+        <span class="step">AudioContext</span>
+        <span class="arrow">→</span>
+        <span class="step">AnalyserNode (FFT 256)</span>
+        <span class="arrow">→</span>
+        <span class="step">getByteFrequencyData()</span>
+        <span class="arrow">→</span>
+        <span class="step">Canvas 绘制 64 竖条</span>
+      </div>
+      <p>
+        <strong>音频分析：</strong>麦克风 MediaStream 接入 <code>AnalyserNode</code>，FFT size = <strong>256</strong>（128 频率 bin），每帧取前 <strong>64</strong> 个 bin 绘制频谱条。
+      </p>
+      <p style="margin-top:8px;">
+        <strong>Canvas 绘制：</strong>用 <code>requestAnimationFrame</code> 驱动 60fps 动画。Canvas 尺寸自适应 <code>clientWidth &times; devicePixelRatio</code>（Retina 高清）。
+        每个频率条宽度 = <code>canvasWidth / 64</code>，高度 = <code>频率值 / 255 &times; canvasHeight &times; 0.9</code>，从底部向上生长。
+      </p>
+      <p style="margin-top:8px;">
+        <strong>视觉效果：</strong>填充色 <code>rgba(232, 232, 232, opacity)</code>，opacity = <code>0.3 + val &times; 0.7</code> — 安静时半透明，响亮时全不透明，营造呼吸感。
+        条间 1px 间隙（<code>&times; devicePixelRatio</code>），黑色背景上的灰白竖条，与整体暗色主题统一。
+      </p>
+      <pre><span class="cm">// web/app.js — setupSpectrum()</span>
+<span class="kw">function</span> <span class="fn">draw</span>() {
+  animFrameId = <span class="fn">requestAnimationFrame</span>(draw);
+  analyser.<span class="fn">getByteFrequencyData</span>(dataArr);
+  <span class="kw">for</span> (<span class="kw">let</span> i = <span class="num">0</span>; i &lt; <span class="num">64</span>; i++) {
+    <span class="kw">const</span> val = dataArr[i] / <span class="num">255</span>;
+    <span class="kw">const</span> opacity = <span class="num">0.3</span> + val * <span class="num">0.7</span>;
+    ctx.fillStyle = <span class="str">`rgba(232,232,232,${opacity})`</span>;
+    ctx.<span class="fn">fillRect</span>(x, h - barH, barW - gap, barH);
+  }
+}</pre>
+    </div>
+  </div>
+
+  <!-- Dual-column Subtitles -->
+  <div class="feat-detail reveal">
+    <div class="feat-header">
+      <div class="icon">&#128220;</div>
+      <h3>双栏字幕布局</h3>
+      <span class="feat-badge">CSS Grid</span>
+    </div>
+    <div class="feat-body">
+      <div class="feat-flow">
+        <span class="step">原文 pane</span>
+        <span class="arrow">|</span>
+        <span class="step">1px divider</span>
+        <span class="arrow">|</span>
+        <span class="step">译文 pane</span>
+      </div>
+      <p>
+        <strong>Grid 布局：</strong><code>grid-template-columns: 1fr 1px 1fr</code> — 两个等宽字幕面板，中间 1px 分隔线。
+        每个面板内部用 <code>flex-direction: column</code> 纵向排列字幕行，<code>overflow-y: auto</code> + <code>scroll-behavior: smooth</code> 平滑滚动。
+      </p>
+      <p style="margin-top:8px;">
+        <strong>字幕行结构：</strong>每行是一个 <code>&lt;div class="line"&gt;</code>，内含 <code>&lt;span class="committed"&gt;</code>（白色已定稿）+ <code>&lt;span class="pending"&gt;</code>（灰色临时）。
+        用两个 <strong>Map</strong> 追踪：<code>sourceLines</code> 和 <code>targetLines</code>（id → {el, committedEl, pendingEl}）。
+      </p>
+      <p style="margin-top:8px;">
+        <strong>自动滚动：</strong>每次更新字幕后执行 <code>containerEl.scrollTop = containerEl.scrollHeight</code>，配合 CSS smooth scroll 动画自动跟随最新内容。
+      </p>
+      <p style="margin-top:8px;">
+        <strong>说话人区分：</strong>静音 &ge;2s 切换说话人。Speaker 0 = 蓝色左边框 + "A" 标签；Speaker 1 = 橙色左边框 + "B" 标签。通过 <code>data-speaker</code> 属性 + CSS 类控制。
+      </p>
+    </div>
+  </div>
+
+  <!-- Video Time Sync -->
+  <div class="feat-detail reveal">
+    <div class="feat-header">
+      <div class="icon">&#127910;</div>
+      <h3>视频字幕同步</h3>
+      <span class="feat-badge">ontimeupdate</span>
+    </div>
+    <div class="feat-body">
+      <div class="feat-flow">
+        <span class="step">video.ontimeupdate</span>
+        <span class="arrow">→</span>
+        <span class="step">syncSubtitlesWithVideo(currentTime)</span>
+        <span class="arrow">→</span>
+        <span class="step">匹配 segTimestamps</span>
+        <span class="arrow">→</span>
+        <span class="step">高亮 + 轮播</span>
+      </div>
+      <p>
+        <strong>时间戳存储：</strong><code>segTimestamps</code> Map 记录每个 ASR 段的 <code>{start, end}</code> 秒数（来自 <code>asr_final</code> 消息的 startTime/endTime）。
+      </p>
+      <p style="margin-top:8px;">
+        <strong>匹配逻辑：</strong>遍历所有段，找到 <code>currentTime &ge; start && currentTime &lt; end</code> 的精确匹配；无精确匹配时取最近的已过段（<code>nearestId</code>）。
+        命中段添加 <code>.active-seg</code> 类 — 绿色左边框 + 浅绿背景高亮。
+      </p>
+      <p style="margin-top:8px;">
+        <strong>轮播隐藏：</strong><code>carouselShowAround()</code> 将当前段之前的所有行添加 <code>.carousel-hide</code>（<code>visibility: hidden + position: absolute</code>），
+        只显示当前和未来的字幕行，模拟字幕滚动消失效果。暂停视频时恢复全部显示。
+      </p>
+      <p style="margin-top:8px;">
+        <strong>SRT 导出：</strong>基于 <code>segTimestamps</code> 生成标准 SRT 格式（序号 + 时间码 + 文本），支持原文/译文/双语三种模式。文件模式含真实时间戳，实时模式用递增序号。
+      </p>
+    </div>
+  </div>
+
+  <!-- Document Picture-in-Picture -->
+  <div class="feat-detail reveal">
+    <div class="feat-header">
+      <div class="icon">&#128444;</div>
+      <h3>画中画悬浮字幕</h3>
+      <span class="feat-badge">Document PiP API</span>
+    </div>
+    <div class="feat-body">
+      <div class="feat-flow">
+        <span class="step">User Gesture</span>
+        <span class="arrow">→</span>
+        <span class="step">requestWindow(500×180)</span>
+        <span class="arrow">→</span>
+        <span class="step">注入 CSS + DOM</span>
+        <span class="arrow">→</span>
+        <span class="step">实时更新字幕</span>
+      </div>
+      <p>
+        <strong>创建时机：</strong>必须在 <code>getDisplayMedia</code> 之前调用（两者都需要 user gesture，但只有一次机会）。
+        调用 <code>documentPictureInPicture.requestWindow({ width: 500, height: 180 })</code> 创建<strong>始终置顶</strong>的独立窗口。
+      </p>
+      <p style="margin-top:8px;">
+        <strong>窗口内容：</strong>向 PiP 窗口的 <code>document.head</code> 注入自定义样式，<code>document.body</code> 注入两个 DOM 元素：
+        <code>.pip-source</code>（原文，16px 灰色）+ <code>.pip-target</code>（译文，22px 白色粗体）。背景 <code>rgba(0,0,0,0.85)</code> 半透明黑，Flex 垂直居中。
+      </p>
+      <p style="margin-top:8px;">
+        <strong>实时更新：</strong>所有 WebSocket 消息（<code>asr_partial</code>、<code>asr_final</code>、<code>translation_partial</code>、<code>translation</code>、<code>correction</code>）
+        均触发 <code>updatePiPSubtitles(source, target)</code>，直接操作 PiP 窗口的 DOM（<code>pipWindow.document.getElementById()</code>）。
+        新字幕附带 <code>fadeIn</code> CSS 动画（0.2s 向上淡入）。
+      </p>
+      <p style="margin-top:8px;">
+        <strong>降级方案：</strong>不支持 Document PiP API 的浏览器降级为 <code>window.open('', 'subtitles', 'width=500,height=200')</code> 普通弹窗，
+        注入相同的 CSS + DOM，功能完全一致，只是不会始终置顶。
+      </p>
+      <p style="margin-top:8px;">
+        <strong>生命周期：</strong>监听 PiP 窗口的 <code>pagehide</code>（Document PiP）或 <code>onbeforeunload</code>（弹窗）事件，
+        用户手动关闭时自动将 <code>pipWindow</code> 置 null。停止识别时主动 <code>pipWindow.close()</code> 清理。
+        <code>updatePiPSubtitles</code> 内用 try/catch 保护，窗口已关闭时静默置 null 不抛错。
+      </p>
+      <pre><span class="cm">// web/app.js — Document PiP 创建</span>
+<span class="kw">if</span> (<span class="str">'documentPictureInPicture'</span> <span class="kw">in</span> window) {
+  pipWindow = <span class="kw">await</span> documentPictureInPicture.<span class="fn">requestWindow</span>({
+    <span class="prop">width</span>: <span class="num">500</span>, <span class="prop">height</span>: <span class="num">180</span>
+  });
+  pipWindow.document.head.innerHTML = <span class="str">`&lt;style&gt;${pipStyles}&lt;/style&gt;`</span>;
+  pipWindow.document.body.innerHTML = pipBody;
+  pipWindow.<span class="fn">addEventListener</span>(<span class="str">'pagehide'</span>, () =&gt; { pipWindow = <span class="kw">null</span>; });
+}
+
+<span class="cm">// 实时字幕更新</span>
+<span class="kw">function</span> <span class="fn">updatePiPSubtitles</span>(sourceText, targetText) {
+  <span class="kw">if</span> (!pipWindow) <span class="kw">return</span>;
+  <span class="kw">const</span> doc = pipWindow.document;
+  <span class="kw">if</span> (sourceText) doc.<span class="fn">getElementById</span>(<span class="str">'pipSource'</span>).textContent = sourceText;
+  <span class="kw">if</span> (targetText) doc.<span class="fn">getElementById</span>(<span class="str">'pipTarget'</span>).textContent = targetText;
+}</pre>
     </div>
   </div>
 </section>
 
-<!-- ==================== 6. Stats ==================== -->
+<!-- ==================== 8. Algorithms ==================== -->
+<section id="algo">
+  <h2 class="section-title reveal">核心算法</h2>
+  <p class="section-subtitle reveal">从音频流到翻译输出的四个关键技术环节</p>
+
+  <div class="algo-grid">
+    <!-- VAD State Machine -->
+    <div class="algo-card reveal">
+      <h3>VAD 状态机</h3>
+      <div class="algo-desc">能量检测 + 双阈值端点切分，自动将连续音频流切成语句</div>
+      <div class="algo-params">
+        <div class="algo-param"><span class="lbl">采样率 </span><span class="val">16kHz</span></div>
+        <div class="algo-param"><span class="lbl">语音起始 </span><span class="val">0.15s</span></div>
+        <div class="algo-param"><span class="lbl">端点检测 </span><span class="val">0.6s</span><span class="lbl"> 实时 / </span><span class="val">1.0s</span><span class="lbl"> 文件</span></div>
+        <div class="algo-param"><span class="lbl">RMS 阈值 </span><span class="val">300</span></div>
+        <div class="algo-param"><span class="lbl">分块上限 </span><span class="val">1.5s</span><span class="lbl"> 实时 / </span><span class="val">2.5s</span><span class="lbl"> 文件</span></div>
+      </div>
+      <div class="visual">
+        <span class="gold">silence</span>
+        &nbsp;── speechSamples &ge; onset ──&gt;&nbsp;
+        <span class="accent">speech</span>
+        <br><br>
+        <span class="accent">speech</span>
+        &nbsp;── silenceSamples &ge; endpoint ──&gt;&nbsp;
+        <span class="gold">silence</span>
+      </div>
+      <pre><span class="cm">// server/asr.js:224-257 — VAD 状态机</span>
+<span class="kw">if</span> (<span class="kw">this</span>.<span class="prop">vadState</span> === <span class="str">'silence'</span>) {
+  <span class="kw">if</span> (isSpeech) {
+    <span class="kw">this</span>.<span class="prop">vadSpeechSamples</span> += samples;
+    <span class="kw">if</span> (<span class="kw">this</span>.<span class="prop">vadSpeechSamples</span> >= <span class="kw">this</span>.<span class="prop">vadSpeechOnset</span>) {
+      <span class="kw">this</span>.<span class="prop">vadState</span> = <span class="str">'speech'</span>;
+    }
+  }
+} <span class="kw">else</span> {  <span class="cm">// vadState === 'speech'</span>
+  <span class="kw">if</span> (!isSpeech) {
+    <span class="kw">this</span>.<span class="prop">vadSilenceSamples</span> += samples;
+    <span class="kw">if</span> (<span class="kw">this</span>.<span class="prop">vadSilenceSamples</span> >= <span class="kw">this</span>.<span class="prop">vadEndpointSamples</span>) {
+      <span class="kw">this</span>.<span class="prop">vadState</span> = <span class="str">'silence'</span>;
+      <span class="kw">this</span>.<span class="fn">_processChunk</span>();
+      <span class="kw">this</span>.<span class="fn">_flushAccumulated</span>();
+    }
+  }
+}</pre>
+    </div>
+
+    <!-- LocalAgreement-2 -->
+    <div class="algo-card reveal reveal-delay-1">
+      <h3>LocalAgreement-2 提交策略</h3>
+      <div class="algo-desc">连续两次 ASR 假设在前缀达成一致才定稿，平衡速度与稳定性。源自 whisper_streaming 的经典做法。</div>
+      <div class="algo-params">
+        <div class="algo-param"><span class="lbl">normalize: </span><span class="val">lowercase + 去标点</span></div>
+        <div class="algo-param"><span class="lbl">flush 触发: </span><span class="val">final 事件 / VAD 端点</span></div>
+      </div>
+      <div class="visual">
+        hypothesis<sub>t-1</sub>: <span class="gold">The quick brown</span> fox jumps<br>
+        hypothesis<sub>t</sub>&nbsp;&nbsp;: <span class="gold">The quick brown</span> fox runs<br>
+        <br>
+        <span class="accent">commit</span>: "The quick brown" &nbsp;|&nbsp; <span class="gold">pending</span>: "fox runs"
+      </div>
+      <pre><span class="cm">// server/commit.js:20-41 — LocalAgreement-2</span>
+<span class="fn">update</span>(words) {
+  <span class="kw">const</span> newlyCommitted = [];
+  <span class="kw">const</span> start = <span class="kw">this</span>.<span class="prop">committed</span>.length;
+  <span class="kw">let</span> i = start;
+  <span class="kw">while</span> (
+    i &lt; words.length &amp;&amp;
+    i &lt; <span class="kw">this</span>.<span class="prop">prevHypothesis</span>.length &amp;&amp;
+    <span class="fn">normalize</span>(words[i]) === <span class="fn">normalize</span>(<span class="kw">this</span>.<span class="prop">prevHypothesis</span>[i])
+  ) {
+    newlyCommitted.<span class="fn">push</span>(words[i]);
+    i++;
+  }
+  <span class="kw">this</span>.<span class="prop">committed</span>.<span class="fn">push</span>(...newlyCommitted);
+  <span class="kw">this</span>.<span class="prop">prevHypothesis</span> = words;
+  <span class="kw">return</span> { <span class="prop">committed</span>, <span class="prop">pending</span>, <span class="prop">newlyCommitted</span> };
+}</pre>
+    </div>
+
+    <!-- Streaming Translation -->
+    <div class="algo-card reveal reveal-delay-2">
+      <h3>流式翻译 + 自动纠正</h3>
+      <div class="algo-desc">滑动窗口上下文 + JSON 结构化输出，支持回溯纠正已发译文</div>
+      <div class="algo-params">
+        <div class="algo-param"><span class="lbl">上下文窗口 </span><span class="val">8 句</span></div>
+        <div class="algo-param"><span class="lbl">术语表上限 </span><span class="val">30 条</span><span class="lbl"> FIFO</span></div>
+        <div class="algo-param"><span class="lbl">用户反馈 </span><span class="val">3 条</span></div>
+        <div class="algo-param"><span class="lbl">流式提取 </span><span class="val">Regex 匹配不完整 JSON</span></div>
+      </div>
+      <div class="visual" style="text-align:left; font-size:12px;">
+        <span class="cm">// 8-sentence sliding context window</span><br>
+        context[0]: "Previous sentence..."<br>
+        context[1]: "Another sentence..."<br>
+        context[2]: "More context..."<br>
+        <span class="accent">current</span>: "New input to translate"
+      </div>
+      <pre><span class="cm">// 翻译 Prompt 要求 JSON 输出结构</span>
+{
+  <span class="prop">"target"</span>: <span class="str">"本句的中文翻译"</span>,
+  <span class="prop">"corrections"</span>: [
+    {<span class="prop">"id"</span>: <span class="num">句子编号</span>, <span class="prop">"target"</span>: <span class="str">"修正后的译文"</span>}
+  ],
+  <span class="prop">"terms"</span>: [
+    {<span class="prop">"src"</span>: <span class="str">"原文术语"</span>, <span class="prop">"tgt"</span>: <span class="str">"译文术语"</span>}
+  ]
+}</pre>
+    </div>
+
+    <!-- Voice Cloning -->
+    <div class="algo-card reveal reveal-delay-3">
+      <h3>声音克隆 TTS</h3>
+      <div class="algo-desc">零样本声音克隆：5 秒采样即可复刻说话人音色，用克隆音色播报译文</div>
+      <div class="algo-params">
+        <div class="algo-param"><span class="lbl">采样 </span><span class="val">5s</span><span class="lbl"> = 80000 samples @16kHz</span></div>
+        <div class="algo-param"><span class="lbl">模型 </span><span class="val">CosyVoice2-0.5B</span></div>
+        <div class="algo-param"><span class="lbl">分段 </span><span class="val">&le;50 字符</span><span class="lbl"> 只合成首段</span></div>
+        <div class="algo-param"><span class="lbl">输出 </span><span class="val">MP3</span></div>
+        <div class="algo-param"><span class="lbl">降级 </span><span class="val">预设音色 / speechSynthesis</span></div>
+      </div>
+      <div class="visual" style="text-align:left; font-size:12px; line-height:2.2;">
+        <strong>Step 1 — 浏览器端采集</strong><br>
+        &nbsp;&nbsp;麦克风前 5s PCM16 → <span class="accent">collectVoiceSample()</span> 累积到 80000 样本<br>
+        &nbsp;&nbsp;UI 显示「采集声纹 xx%」进度，TTS 播放期间暂停采集防止回声<br>
+        <strong>Step 2 — 发送到服务端</strong><br>
+        &nbsp;&nbsp;先发 JSON: <span class="gold">{ type: 'voice_sample', sampleRate: 16000, samples: 80000 }</span><br>
+        &nbsp;&nbsp;紧接着发 <span class="gold">二进制 ArrayBuffer</span>（160KB PCM16）<br>
+        &nbsp;&nbsp;服务端用 <span class="accent">pendingVoiceSample</span> 标志位区分声纹 vs 普通音频<br>
+        <strong>Step 3 — 服务端处理</strong><br>
+        &nbsp;&nbsp;PCM16 → <span class="accent">pcm16ToWav()</span> 手动拼 44 字节 WAV 头 → Base64 → data URI<br>
+        &nbsp;&nbsp;WAV → <span class="accent">transcribeWav()</span> 调 SenseVoice ASR 得到文本 transcript<br>
+        &nbsp;&nbsp;存入 <span class="accent">sessionVoiceRefs</span> Map（会话级，断开自动清理）<br>
+        <strong>Step 4 — 克隆合成</strong><br>
+        &nbsp;&nbsp;翻译完成 → <span class="accent">synthesize(text, sessionId)</span><br>
+        &nbsp;&nbsp;长文本按标点拆分（<span class="gold">/[。！？；，、.!?;,]/</span>），只合成第一段降低延迟<br>
+        &nbsp;&nbsp;有 voiceRef → <span class="accent">references</span> 数组克隆；无 → 预设音色 fallback<br>
+        <strong>Step 5 — 浏览器播放</strong><br>
+        &nbsp;&nbsp;服务端发 tts_audio JSON + MP3 二进制 → Blob → <span class="accent">new Audio()</span> 播放<br>
+        &nbsp;&nbsp;播放期间暂停 Web Speech API + 静音麦克风 PCM 防止回声循环
+      </div>
+      <pre><span class="cm">// server/tts.js — CosyVoice2 克隆 API 调用</span>
+{
+  <span class="prop">"model"</span>: <span class="str">"FunAudioLLM/CosyVoice2-0.5B"</span>,
+  <span class="prop">"input"</span>: <span class="str">"要合成的译文（首段 &le;50 字符）"</span>,
+  <span class="prop">"references"</span>: [{
+    <span class="prop">"audio"</span>: <span class="str">"data:audio/wav;base64,UklGR..."</span>,
+    <span class="prop">"text"</span>:  <span class="str">"ASR 转录的参考音频文本"</span>
+  }],
+  <span class="prop">"response_format"</span>: <span class="str">"mp3"</span>
+}
+<span class="cm">// 注意: voice 和 references 互斥</span>
+<span class="cm">// 克隆失败时自动降级为 synthesizeWithVoice(预设音色)</span></pre>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 8. Auto-Correction Pipeline ==================== -->
+<section id="correction">
+  <h2 class="section-title reveal">自动纠正机制</h2>
+  <p class="section-subtitle reveal">四层纠正管线 — 从语音识别到人工校对，层层保证译文质量</p>
+
+  <div class="correction-pipeline">
+    <!-- Layer 1: ASR -->
+    <div class="correction-layer reveal">
+      <span class="layer-badge l1">Layer 1 — ASR 级</span>
+      <h4>语音假设逐步稳定</h4>
+      <div class="layer-desc">
+        <p>Web Speech API 逐词输出 interim hypothesis，文字不断跳动修正.
+        <strong>LocalAgreement-2</strong> 算法：只有连续两次假设在前缀达成一致才定稿提交，其余留作灰色临时区。</p>
+        <div class="feat-flow" style="margin-top:12px;">
+          <span class="step">interim: "I think we should"</span>
+          <span class="arrow">→</span>
+          <span class="step">interim: "I think we should go"</span>
+          <span class="arrow">→</span>
+          <span class="step" style="border-color:var(--green);">commit: "I think we should"</span>
+        </div>
+        <p style="margin-top:8px;">服务端 ASR（SenseVoice/Whisper）同理：VAD 分块 → 整段识别 → 文字累积 → 句边界检测后 flush 定稿。</p>
+      </div>
+    </div>
+
+    <div class="correction-connector"></div>
+
+    <!-- Layer 2: LLM Translation Correction -->
+    <div class="correction-layer reveal reveal-delay-1">
+      <span class="layer-badge l2">Layer 2 — LLM 翻译回改</span>
+      <h4>上下文感知回溯修正</h4>
+      <div class="layer-desc">
+        <p><strong>8 句滑动窗口</strong>作为上下文注入 Prompt。LLM 翻译当前句的同时，输出 <strong>corrections[]</strong> 数组回溯修改之前已发布的译文。
+        典型场景：后文出现消歧信息后，LLM 自动修正前句的错误翻译。</p>
+        <pre><span class="cm">// LLM 输出 JSON 结构</span>
+{
+  <span class="prop">"target"</span>: <span class="str">"当前句的译文"</span>,
+  <span class="prop">"corrections"</span>: [
+    {<span class="prop">"id"</span>: <span class="val">3</span>, <span class="prop">"target"</span>: <span class="str">"修正后的第3句译文"</span>},
+    {<span class="prop">"id"</span>: <span class="val">5</span>, <span class="prop">"target"</span>: <span class="str">"修正后的第5句译文"</span>}
+  ],
+  <span class="prop">"terms"</span>: [{<span class="prop">"src"</span>: <span class="str">"术语"</span>, <span class="prop">"tgt"</span>: <span class="str">"翻译"</span>}]
+}</pre>
+        <p style="margin-top:8px;">系统遍历 corrections 数组 → 找到对应 id 的字幕行 → 原地替换译文 → 触发 Layer 3 视觉反馈。</p>
+      </div>
+    </div>
+
+    <div class="correction-connector"></div>
+
+    <!-- Layer 3: Visual Feedback -->
+    <div class="correction-layer reveal reveal-delay-2">
+      <span class="layer-badge l3">Layer 3 — 字幕三态显示</span>
+      <h4>视觉状态即时反馈</h4>
+      <div class="layer-desc">
+        <p>每行字幕都有明确的视觉状态，用户一眼就能分辨定稿、临时和修正内容：</p>
+        <div class="subtitle-states">
+          <span class="subtitle-state final">白色 = 已定稿</span>
+          <span class="subtitle-state partial">灰色 = 临时 (is-partial)</span>
+          <span class="subtitle-state corrected">黄色闪烁 = 已修正</span>
+        </div>
+        <p style="margin-top:10px;">修正动画：<code>flash-correct</code> CSS 关键帧 <strong>1.6s</strong>，黄色高亮 + 右上角"已修正"标签。动画结束后自动移除 class。</p>
+      </div>
+    </div>
+
+    <div class="correction-connector"></div>
+
+    <!-- Layer 4: Manual Edit -->
+    <div class="correction-layer reveal reveal-delay-3">
+      <span class="layer-badge l4">Layer 4 — 人工修正</span>
+      <h4>双击编辑 → 即时重译</h4>
+      <div class="layer-desc">
+        <p>用户<strong>双击</strong>任意原文字幕行，进入 <code>contentEditable</code> 编辑模式。修改完成后自动发送重译请求：</p>
+        <div class="feat-flow" style="margin-top:10px;">
+          <span class="step">双击编辑原文</span>
+          <span class="arrow">→</span>
+          <span class="step">ws.send({type:'retranslate', id, text})</span>
+          <span class="arrow">→</span>
+          <span class="step">服务端 LLM 重译</span>
+          <span class="arrow">→</span>
+          <span class="step">译文自动更新</span>
+        </div>
+        <p style="margin-top:8px;">修改后的原文同步更新翻译上下文窗口（history[]），影响后续句子的翻译质量和术语一致性。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 9. Latency Optimization ==================== -->
+<section id="latency">
+  <h2 class="section-title reveal">延迟优化</h2>
+  <p class="section-subtitle reveal">从音频输入到字幕显示的端到端延迟拆解与优化策略</p>
+
+  <div class="latency-wrap">
+    <div class="latency-track reveal" style="overflow-x:auto;">
+      <div style="min-width:700px;">
+        <div class="latency-row">
+          <div class="latency-label">VAD 起始检测</div>
+          <div class="latency-bar-area">
+            <div class="latency-bar green" style="left:0; width:5%;">0.15s</div>
+          </div>
+        </div>
+        <div class="latency-row">
+          <div class="latency-label">音频积累</div>
+          <div class="latency-bar-area">
+            <div class="latency-bar dim" style="left:5%; width:25%;">1.5s 分块 (实时)</div>
+          </div>
+        </div>
+        <div class="latency-row">
+          <div class="latency-label">VAD 端点检测</div>
+          <div class="latency-bar-area">
+            <div class="latency-bar gold" style="left:30%; width:10%;">0.6s 静音</div>
+          </div>
+        </div>
+        <div class="latency-row">
+          <div class="latency-label">ASR 识别</div>
+          <div class="latency-bar-area">
+            <div class="latency-bar green" style="left:30%; width:18%;">并行不阻塞</div>
+          </div>
+        </div>
+        <div class="latency-row">
+          <div class="latency-label">文字累积</div>
+          <div class="latency-bar-area">
+            <div class="latency-bar dim" style="left:38%; width:12%;">句边界 / 4s 兜底</div>
+          </div>
+        </div>
+        <div class="latency-row">
+          <div class="latency-label">流式翻译</div>
+          <div class="latency-bar-area">
+            <div class="latency-bar green" style="left:50%; width:22%;">~10 字即显示</div>
+          </div>
+        </div>
+        <div class="latency-row">
+          <div class="latency-label">TTS 合成</div>
+          <div class="latency-bar-area">
+            <div class="latency-bar gold" style="left:55%; width:15%;">首段 ≤50 字</div>
+          </div>
+        </div>
+        <div class="latency-axis">
+          <span>0s</span><span>1s</span><span>2s</span><span>3s</span><span>4s</span><span>5s</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="latency-mode-compare reveal">
+      <div class="latency-mode-card">
+        <h4 style="color:var(--green);">实时模式 (麦克风)</h4>
+        <div class="metric"><span>VAD 端点</span><span class="val">0.6s</span></div>
+        <div class="metric"><span>ASR 分块上限</span><span class="val">1.5s (24000 样本)</span></div>
+        <div class="metric"><span>最小 ASR 长度</span><span class="val">0.5s (8000 样本)</span></div>
+        <div class="metric"><span>并行 ASR</span><span class="val">pendingASR 计数器</span></div>
+        <div class="metric"><span>文字累积</span><span class="val">句边界检测 + 4s 兜底</span></div>
+        <div class="metric"><span>流式翻译首字</span><span class="val">Regex 提取 ~10 字符即显</span></div>
+        <div class="metric"><span>TTS 策略</span><span class="val">首段 ≤50 字符, 省 ~70%</span></div>
+      </div>
+      <div class="latency-mode-card">
+        <h4 style="color:var(--gold);">文件模式 (上传 / URL)</h4>
+        <div class="metric"><span>VAD 端点</span><span class="val">1.0s</span></div>
+        <div class="metric"><span>ASR 分块上限</span><span class="val">2.5s (40000 样本)</span></div>
+        <div class="metric"><span>最小 ASR 长度</span><span class="val">0.8s (12800 样本)</span></div>
+        <div class="metric"><span>文件分块发送</span><span class="val">0.5s 块 @ 100ms 间隔</span></div>
+        <div class="metric"><span>文字累积</span><span class="val">同上</span></div>
+        <div class="metric"><span>流式翻译首字</span><span class="val">同上</span></div>
+        <div class="metric"><span>TTS 策略</span><span class="val">同上</span></div>
+      </div>
+    </div>
+
+    <div class="algo-params reveal" style="margin-top:24px; justify-content:center;">
+      <div class="algo-param"><span class="lbl">关键优化: </span><span class="val">ASR 并行</span><span class="lbl"> — pendingASR 计数器, 管线不阻塞等待上一次识别</span></div>
+      <div class="algo-param"><span class="lbl">流式提取: </span><span class="val">Regex</span><span class="lbl"> 匹配不完整 JSON 的 "target" 字段, 边生成边显示</span></div>
+      <div class="algo-param"><span class="lbl">TTS 拆分: </span><span class="val">splitLongText()</span><span class="lbl"> 按标点拆段, 仅合成首段降低延迟</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 10. WebSocket Protocol ==================== -->
+<section id="ws-protocol">
+  <h2 class="section-title reveal">WebSocket 消息协议</h2>
+  <p class="section-subtitle reveal">JSON 控制消息 + 二进制音频帧，双向实时通信的完整协议定义</p>
+
+  <div class="protocol-wrap">
+    <h3 class="reveal" style="margin-bottom:16px; font-size:18px;">客户端 → 服务端</h3>
+    <div class="protocol-grid reveal">
+      <div class="protocol-card">
+        <div class="protocol-type">start</div>
+        <div class="protocol-frame">JSON</div>
+        <div class="protocol-desc">开始实时识别会话</div>
+        <pre>{<span class="prop">"type"</span>: <span class="str">"start"</span>, <span class="prop">"direction"</span>: <span class="str">"en2zh"</span>, <span class="prop">"mode"</span>: <span class="str">"mic"</span>}</pre>
+      </div>
+      <div class="protocol-card">
+        <div class="protocol-type">start_url</div>
+        <div class="protocol-frame">JSON</div>
+        <div class="protocol-desc">在线视频模式，服务端 yt-dlp 拉取</div>
+        <pre>{<span class="prop">"type"</span>: <span class="str">"start_url"</span>, <span class="prop">"direction"</span>: <span class="str">"en2zh"</span>, <span class="prop">"url"</span>: <span class="str">"https://..."</span>}</pre>
+      </div>
+      <div class="protocol-card">
+        <div class="protocol-type">voice_sample</div>
+        <div class="protocol-frame" style="background:var(--gold);color:#000;">JSON + Binary</div>
+        <div class="protocol-desc">声纹采样：先发 JSON 头，紧跟二进制 PCM16</div>
+        <pre><span class="cm">// 消息 1: JSON 头</span>
+{<span class="prop">"type"</span>: <span class="str">"voice_sample"</span>, <span class="prop">"sampleRate"</span>: <span class="num">16000</span>, <span class="prop">"samples"</span>: <span class="num">80000</span>}
+<span class="cm">// 消息 2: Binary ArrayBuffer (160KB PCM16)</span></pre>
+      </div>
+      <div class="protocol-card">
+        <div class="protocol-type">PCM 音频</div>
+        <div class="protocol-frame" style="background:#e8e8e8;color:#000;">Binary</div>
+        <div class="protocol-desc">实时音频流，Int16Array.buffer 直传</div>
+        <pre><span class="cm">// 无 JSON 包装，直接发送 ArrayBuffer</span>
+ws.send(int16Array.buffer);</pre>
+      </div>
+      <div class="protocol-card">
+        <div class="protocol-type">asr_interim</div>
+        <div class="protocol-frame">JSON</div>
+        <div class="protocol-desc">浏览器 Web Speech API 的 interim 结果转发</div>
+        <pre>{<span class="prop">"type"</span>: <span class="str">"asr_interim"</span>, <span class="prop">"id"</span>: <span class="num">3</span>, <span class="prop">"text"</span>: <span class="str">"识别中的文本"</span>}</pre>
+      </div>
+      <div class="protocol-card">
+        <div class="protocol-type">retranslate</div>
+        <div class="protocol-frame">JSON</div>
+        <div class="protocol-desc">用户双击编辑原文后请求重新翻译</div>
+        <pre>{<span class="prop">"type"</span>: <span class="str">"retranslate"</span>, <span class="prop">"id"</span>: <span class="num">3</span>, <span class="prop">"text"</span>: <span class="str">"修改后的原文"</span>}</pre>
+      </div>
+      <div class="protocol-card">
+        <div class="protocol-type">feedback</div>
+        <div class="protocol-frame">JSON</div>
+        <div class="protocol-desc">用户标记某句翻译有误，注入后续 Prompt</div>
+        <pre>{<span class="prop">"type"</span>: <span class="str">"feedback"</span>, <span class="prop">"id"</span>: <span class="num">5</span>}</pre>
+      </div>
+      <div class="protocol-card">
+        <div class="protocol-type">file_done / stop_url</div>
+        <div class="protocol-frame">JSON</div>
+        <div class="protocol-desc">文件发送完毕 / 停止 URL 模式</div>
+        <pre>{<span class="prop">"type"</span>: <span class="str">"file_done"</span>}</pre>
+      </div>
+    </div>
+
+    <h3 class="reveal" style="margin-top:40px; margin-bottom:16px; font-size:18px;">服务端 → 客户端</h3>
+    <div class="protocol-grid reveal">
+      <div class="protocol-card">
+        <div class="protocol-type">ready</div>
+        <div class="protocol-frame">JSON</div>
+        <div class="protocol-desc">会话就绪，告知客户端 ASR/TTS 模式</div>
+        <pre>{<span class="prop">"type"</span>: <span class="str">"ready"</span>, <span class="prop">"mode"</span>: <span class="str">"mic"</span>, <span class="prop">"asrMode"</span>: <span class="str">"server"</span>, <span class="prop">"ttsMode"</span>: <span class="str">"server"</span>}</pre>
+      </div>
+      <div class="protocol-card">
+        <div class="protocol-type">asr_partial</div>
+        <div class="protocol-frame">JSON</div>
+        <div class="protocol-desc">ASR 中间结果，committed + pending 分离</div>
+        <pre>{<span class="prop">"type"</span>: <span class="str">"asr_partial"</span>, <span class="prop">"id"</span>: <span class="num">2</span>, <span class="prop">"committed"</span>: <span class="str">"已确认文本"</span>, <span class="prop">"pending"</span>: <span class="str">"待确认"</span>}</pre>
+      </div>
+      <div class="protocol-card">
+        <div class="protocol-type">asr_final</div>
+        <div class="protocol-frame">JSON</div>
+        <div class="protocol-desc">ASR 最终结果，含时间戳和说话人</div>
+        <pre>{<span class="prop">"type"</span>: <span class="str">"asr_final"</span>, <span class="prop">"id"</span>: <span class="num">2</span>, <span class="prop">"text"</span>: <span class="str">"完整句子"</span>,
+ <span class="prop">"startTime"</span>: <span class="num">12.5</span>, <span class="prop">"endTime"</span>: <span class="num">15.3</span>, <span class="prop">"speaker"</span>: <span class="num">0</span>}</pre>
+      </div>
+      <div class="protocol-card">
+        <div class="protocol-type">translation_partial</div>
+        <div class="protocol-frame">JSON</div>
+        <div class="protocol-desc">流式翻译，Regex 从不完整 JSON 提取的部分译文</div>
+        <pre>{<span class="prop">"type"</span>: <span class="str">"translation_partial"</span>, <span class="prop">"id"</span>: <span class="num">2</span>, <span class="prop">"partial"</span>: <span class="str">"翻译中..."</span>}</pre>
+      </div>
+      <div class="protocol-card">
+        <div class="protocol-type">translation</div>
+        <div class="protocol-frame">JSON</div>
+        <div class="protocol-desc">翻译完成，包含源文和译文</div>
+        <pre>{<span class="prop">"type"</span>: <span class="str">"translation"</span>, <span class="prop">"id"</span>: <span class="num">2</span>, <span class="prop">"source"</span>: <span class="str">"Hello"</span>, <span class="prop">"target"</span>: <span class="str">"你好"</span>}</pre>
+      </div>
+      <div class="protocol-card">
+        <div class="protocol-type">correction</div>
+        <div class="protocol-frame">JSON</div>
+        <div class="protocol-desc">LLM 回溯纠正之前某句的译文</div>
+        <pre>{<span class="prop">"type"</span>: <span class="str">"correction"</span>, <span class="prop">"id"</span>: <span class="num">1</span>, <span class="prop">"target"</span>: <span class="str">"修正后的译文"</span>}</pre>
+      </div>
+      <div class="protocol-card">
+        <div class="protocol-type">tts_audio</div>
+        <div class="protocol-frame" style="background:var(--gold);color:#000;">JSON + Binary</div>
+        <div class="protocol-desc">TTS 语音：先发 JSON 头，紧跟二进制 MP3</div>
+        <pre><span class="cm">// 消息 1: JSON 头</span>
+{<span class="prop">"type"</span>: <span class="str">"tts_audio"</span>, <span class="prop">"id"</span>: <span class="num">2</span>, <span class="prop">"format"</span>: <span class="str">"mp3"</span>, <span class="prop">"size"</span>: <span class="num">24576</span>}
+<span class="cm">// 消息 2: Binary ArrayBuffer (MP3 data)</span></pre>
+      </div>
+      <div class="protocol-card">
+        <div class="protocol-type">url_status / error</div>
+        <div class="protocol-frame">JSON</div>
+        <div class="protocol-desc">URL 模式进度 / 全局错误通知</div>
+        <pre>{<span class="prop">"type"</span>: <span class="str">"url_status"</span>, <span class="prop">"status"</span>: <span class="str">"downloading"</span>, <span class="prop">"message"</span>: <span class="str">"正在下载..."</span>}</pre>
+      </div>
+    </div>
+
+    <div class="algo-params reveal" style="margin-top:28px; justify-content:center;">
+      <div class="algo-param"><span class="lbl">关键设计: </span><span class="val">pendingVoiceSample</span><span class="lbl"> 标志位区分声纹二进制 vs 普通音频二进制</span></div>
+      <div class="algo-param"><span class="lbl">JSON + Binary 模式: </span><span class="val">两次 send()</span><span class="lbl"> — 先 JSON 头描述格式/大小，紧跟 ArrayBuffer 数据</span></div>
+      <div class="algo-param"><span class="lbl">总计: </span><span class="val">16 种消息类型</span><span class="lbl"> — 8 上行 + 8 下行</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 11. Multi-Provider Architecture ==================== -->
+<section id="providers">
+  <h2 class="section-title reveal">多 Provider 架构</h2>
+  <p class="section-subtitle reveal">统一抽象层，支持多提供商一键切换 + 自动降级，均使用 OpenAI 兼容 API 格式</p>
+
+  <div class="provider-grid">
+    <!-- LLM Column -->
+    <div class="provider-col reveal">
+      <h3>LLM 翻译 <span style="color:var(--text-dim); font-size:13px; font-weight:400;">(5+1 提供商)</span></h3>
+      <div class="provider-item">
+        <span class="p-name">DeepSeek</span>
+        <span class="p-model">deepseek-chat</span>
+        <span class="p-tag default">默认</span>
+      </div>
+      <div class="provider-item">
+        <span class="p-name">通义千问</span>
+        <span class="p-model">qwen-plus</span>
+      </div>
+      <div class="provider-item">
+        <span class="p-name">Kimi</span>
+        <span class="p-model">moonshot-v1-8k</span>
+      </div>
+      <div class="provider-item">
+        <span class="p-name">OpenAI</span>
+        <span class="p-model">gpt-4o-mini</span>
+      </div>
+      <div class="provider-item">
+        <span class="p-name">智谱</span>
+        <span class="p-model">glm-4-flash</span>
+      </div>
+      <div class="provider-arrow">↓ 或自定义 ↓</div>
+      <div class="provider-item">
+        <span class="p-name">Custom</span>
+        <span class="p-model">任意 OpenAI 兼容 API</span>
+        <span class="p-tag fallback">自定义</span>
+      </div>
+      <div class="provider-env">MT_PROVIDER=deepseek<br>LLM_API_KEY=sk-...<br>LLM_BASE_URL=https://...</div>
+    </div>
+
+    <!-- ASR Column -->
+    <div class="provider-col reveal reveal-delay-1">
+      <h3>ASR 语音识别 <span style="color:var(--text-dim); font-size:13px; font-weight:400;">(3 + 浏览器)</span></h3>
+      <div class="provider-item">
+        <span class="p-name">SiliconFlow</span>
+        <span class="p-model">SenseVoice</span>
+        <span class="p-tag default">默认</span>
+      </div>
+      <div class="provider-item">
+        <span class="p-name">Groq</span>
+        <span class="p-model">whisper-large-v3</span>
+      </div>
+      <div class="provider-item">
+        <span class="p-name">OpenAI</span>
+        <span class="p-model">whisper-1</span>
+      </div>
+      <div class="provider-arrow">↓ fallback ↓</div>
+      <div class="provider-item">
+        <span class="p-name">浏览器</span>
+        <span class="p-model">Web Speech API</span>
+        <span class="p-tag fallback">降级</span>
+      </div>
+      <div class="provider-env">ASR_PROVIDER=siliconflow<br>ASR_API_KEY=sk-...<br>ASR_BASE_URL=https://...</div>
+    </div>
+
+    <!-- TTS Column -->
+    <div class="provider-col reveal reveal-delay-2">
+      <h3>TTS 语音合成 <span style="color:var(--text-dim); font-size:13px; font-weight:400;">(2 + 浏览器)</span></h3>
+      <div class="provider-item">
+        <span class="p-name">SiliconFlow</span>
+        <span class="p-model">CosyVoice2-0.5B</span>
+        <span class="p-tag default">默认</span>
+      </div>
+      <div class="provider-item" style="padding-left:100px; font-size:12px; color:var(--text-dim);">
+        支持零样本声音克隆 (references[])
+      </div>
+      <div class="provider-item">
+        <span class="p-name">OpenAI</span>
+        <span class="p-model">tts-1</span>
+      </div>
+      <div class="provider-arrow">↓ fallback ↓</div>
+      <div class="provider-item">
+        <span class="p-name">浏览器</span>
+        <span class="p-model">speechSynthesis</span>
+        <span class="p-tag fallback">降级</span>
+      </div>
+      <div class="provider-env">TTS_PROVIDER=siliconflow<br>TTS_API_KEY=sk-...<br>TTS_BASE_URL=https://...</div>
+    </div>
+  </div>
+
+  <div class="badge reveal" style="margin-top:32px;">全部使用 OpenAI 兼容 API 格式 — 每个服务只需 3 个环境变量即可切换</div>
+</section>
+
+
+<!-- ==================== 13. Stats ==================== -->
 <section id="stats">
   <h2 class="section-title reveal">关键数据</h2>
   <p class="section-subtitle reveal"></p>
@@ -969,7 +1276,7 @@
   </div>
 </section>
 
-<!-- ==================== 7. CTA ==================== -->
+<!-- ==================== 12. CTA ==================== -->
 <section id="cta">
   <h2 class="section-title reveal">试一试</h2>
   <p class="section-subtitle reveal">启动服务后，点击按钮进入 Live Demo</p>
@@ -1091,6 +1398,86 @@ const statsObserver = new IntersectionObserver((entries) => {
   });
 }, { threshold: 0.5 });
 statsObserver.observe(document.getElementById('stats'));
+
+// ---- Live Spectrum Demo ----
+(function initSpectrumDemo() {
+  const canvas = document.getElementById('demoSpectrum');
+  const btn = document.getElementById('spectrumBtn');
+  const hint = document.getElementById('spectrumHint');
+  if (!canvas || !btn) return;
+  const ctx = canvas.getContext('2d');
+  let audioCtx, analyser, animId, stream;
+  let running = false;
+
+  // idle animation with random gentle bars
+  function drawIdle() {
+    const w = canvas.width = canvas.clientWidth * devicePixelRatio;
+    const h = canvas.height = canvas.clientHeight * devicePixelRatio;
+    ctx.clearRect(0, 0, w, h);
+    const bars = 64, barW = w / bars, gap = 1 * devicePixelRatio;
+    for (let i = 0; i < bars; i++) {
+      const val = 0.05 + Math.sin(Date.now() * 0.002 + i * 0.3) * 0.03;
+      const barH = val * h;
+      ctx.fillStyle = `rgba(232, 232, 232, 0.15)`;
+      ctx.fillRect(i * barW + gap / 2, h - barH, barW - gap, barH);
+    }
+    if (!running) animId = requestAnimationFrame(drawIdle);
+  }
+  drawIdle();
+
+  function drawLive(dataArr) {
+    const w = canvas.width = canvas.clientWidth * devicePixelRatio;
+    const h = canvas.height = canvas.clientHeight * devicePixelRatio;
+    ctx.clearRect(0, 0, w, h);
+    const bars = Math.min(64, dataArr.length), barW = w / bars, gap = 1 * devicePixelRatio;
+    for (let i = 0; i < bars; i++) {
+      const val = dataArr[i] / 255;
+      const barH = val * h * 0.9;
+      const opacity = 0.3 + val * 0.7;
+      ctx.fillStyle = `rgba(232, 232, 232, ${opacity})`;
+      ctx.fillRect(i * barW + gap / 2, h - barH, barW - gap, barH);
+    }
+  }
+
+  function animateLive() {
+    if (!running) return;
+    const dataArr = new Uint8Array(analyser.frequencyBinCount);
+    analyser.getByteFrequencyData(dataArr);
+    drawLive(dataArr);
+    animId = requestAnimationFrame(animateLive);
+  }
+
+  btn.addEventListener('click', async () => {
+    if (running) {
+      // stop
+      running = false;
+      cancelAnimationFrame(animId);
+      if (stream) stream.getTracks().forEach(t => t.stop());
+      if (audioCtx) audioCtx.close();
+      stream = null; audioCtx = null; analyser = null;
+      btn.textContent = '点击开启麦克风频谱';
+      btn.classList.remove('active');
+      hint.textContent = '';
+      drawIdle();
+      return;
+    }
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioCtx = new AudioContext();
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+      audioCtx.createMediaStreamSource(stream).connect(analyser);
+      running = true;
+      btn.textContent = '停止';
+      btn.classList.add('active');
+      hint.textContent = '对着麦克风说话试试';
+      cancelAnimationFrame(animId);
+      animateLive();
+    } catch (e) {
+      hint.textContent = '无法访问麦克风: ' + e.message;
+    }
+  });
+})();
 </script>
 </body>
 </html>

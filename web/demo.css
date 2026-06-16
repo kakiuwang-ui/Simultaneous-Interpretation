@@ -393,6 +393,54 @@ section {
 .file-tree .t-file { color: #e8e8e8; }
 .file-tree .t-cm { color: #555; font-size: 12px; }
 
+/* ==================== Spectrum Demo ==================== */
+.spectrum-demo {
+  position: relative; margin-bottom: 20px; border-radius: 10px; overflow: hidden;
+  background: #0a0a0a; border: 1px solid #222;
+}
+.spectrum-demo canvas {
+  display: block; width: 100%; height: 120px;
+}
+.spectrum-btn {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  background: var(--green); color: #0a0a0a; border: none; padding: 10px 24px;
+  border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer;
+  transition: opacity 0.3s, transform 0.2s;
+}
+.spectrum-btn:hover { transform: translate(-50%, -50%) scale(1.05); }
+.spectrum-btn.active {
+  background: #333; color: #e8e8e8; font-size: 12px; padding: 6px 16px;
+  top: 8px; right: 8px; left: unset; transform: none;
+}
+.spectrum-hint {
+  position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%);
+  color: var(--text-dim); font-size: 12px; white-space: nowrap;
+}
+
+/* ==================== WebSocket Protocol ==================== */
+.protocol-wrap { max-width: 1100px; }
+.protocol-grid {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; max-width: 1100px;
+}
+.protocol-card {
+  background: var(--bg-card); border: 1px solid #222; border-radius: 10px; padding: 16px;
+  transition: border-color 0.3s;
+}
+.protocol-card:hover { border-color: var(--green); }
+.protocol-card pre {
+  margin-top: 10px; font-size: 12px; line-height: 1.6; overflow-x: auto;
+  background: #0e0e0e; padding: 10px; border-radius: 6px;
+}
+.protocol-type {
+  display: inline-block; font-family: 'SF Mono', monospace; font-weight: 700;
+  color: var(--green); font-size: 15px; margin-bottom: 4px;
+}
+.protocol-frame {
+  display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 4px;
+  background: #333; color: #aaa; margin-left: 8px; vertical-align: middle;
+}
+.protocol-desc { color: var(--text-dim); font-size: 13px; margin-top: 4px; }
+
 /* ==================== Counters ==================== */
 #stats { background: #0e0e0e; }
 .counter-row {
@@ -434,6 +482,7 @@ section {
   .lang-matrix { max-width: 100%; }
   .lang-matrix .cell { padding: 10px 4px; font-size: 12px; }
   .provider-grid { grid-template-columns: 1fr; }
+  .protocol-grid { grid-template-columns: 1fr; }
   .latency-mode-compare { grid-template-columns: 1fr; }
   .latency-track { min-width: 500px; }
   .latency-label { width: 100px; font-size: 11px; }
