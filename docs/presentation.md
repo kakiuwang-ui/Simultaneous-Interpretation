@@ -74,7 +74,7 @@
 >
 > 字幕布局是 CSS Grid 双栏——左边原文、右边译文，1px 分隔线。每行字幕分 committed（白色）和 pending（灰色）两个 span，视觉上就能区分已确认和正在识别的文字。
 >
-> 标签页模式的画中画窗口用 Document PiP API 实现，500×180 悬浮窗，注入自定义 CSS + DOM，所有 WebSocket 消息都会同步更新悬浮窗的字幕。不支持 PiP 的浏览器降级为普通弹窗。
+> 标签页模式的画中画窗口用 Document PiP API 实现——`documentPictureInPicture.requestWindow({width:500, height:180})`，拿到新 window 后注入自定义 CSS + DOM，所有 WebSocket 消息通过 `updatePiPSubtitles()` 同步更新悬浮窗字幕。如果浏览器不支持 Document PiP（比如 Firefox），降级为 `window.open()` 普通弹窗，功能不变只是不能始终置顶。
 
 ### 核心算法（3 分钟）
 
@@ -120,6 +120,8 @@
 > **声纹和 TTS 为什么用 JSON 头 + Binary 两帧？** 这些是一次性大二进制数据，需要携带元信息（采样率、格式、大小）。把元信息放 JSON 头，数据紧跟二进制帧，比 Base64 塞进 JSON 高效得多。用 `pendingVoiceSample` 标志位区分"下一帧是声纹还是普通音频"。
 >
 > **ASR 和翻译为什么各分 partial 和 final？** 同传要求边说边出字幕——`asr_partial` 携带 committed + pending 两部分分别渲染白色和灰色；`translation_partial` 让用户不用等整句翻译完。Final 消息触发后续流程。
+>
+> **为什么 16 种消息类型不合并？** 看起来多，但每种职责明确——比如 asr_partial 和 asr_final 如果合成一个用 `isFinal` 区分，前端每次都要 if-else。分开后 switch-case 分发，每个 handler 只做一件事，可读性最好。`type` 字段就是个字符串，零性能开销。
 >
 > 整个协议 16 种消息类型——上行 8 种（start、start_url、voice_sample、PCM 音频、asr_interim、retranslate、feedback、file_done），下行 8 种（ready、asr_partial、asr_final、translation_partial、translation、correction、tts_audio、error）。
 
@@ -370,3 +372,51 @@
 > - corrections 的触发灵敏度（CJK 语言间的互译修正空间更大）
 >
 > 另外有个 `detectLang()` 函数通过 Unicode 码点统计（CJK 范围、假名范围、韩文范围、Latin 范围）自动检测输入语言，如果和用户选择的源语言不一致，会自动切换到正确的翻译方向。比如用户选了 en→zh 但说的是日语，系统会自动切到 ja→zh。
+
+### 10. 项目中遇到的问题与解决
+
+**Q: 开发过程中遇到过哪些棘手的 bug？**
+
+> **1. TTS 回声循环。** 早期 TTS 播报的声音会被麦克风录回来，服务端再次识别、翻译、合成，形成无限循环。排查后发现单靠 `echoCancellation` 不够——浏览器的回声消除对合成语音效果差。最终用了三层防护：播放期间暂停 Web Speech API、静音 PCM 发送、声纹采集阶段也暂停。
+>
+> **2. pendingVoiceSample 异步竞争。** 声纹上传用 JSON 头 + Binary 两帧模式，服务端收到 JSON 后设标志位等下一帧二进制。但标志位清除放在了 `await asrTranscribe()` 之后——ASR 转录的几百毫秒里后续音频帧全被误判为声纹数据，导致音频流中断。修复方法：在 async 操作之前同步清除标志位。
+>
+> **3. SiliconFlow CosyVoice2 声音克隆接口。** 官方文档写的参数名是 `reference_audio`，但实际上要用 `references` 数组格式，而且每个元素必须同时包含 `audio`（data URI）和 `text`（转录文本），缺一个就静默失败不报错。反复抓包对比才发现。
+>
+> **4. Web Speech API 在标签页捕获模式下不工作。** `getDisplayMedia` 获取的是标签页音频流，但 Web Speech API 只能识别麦克风输入，无法指定音频源。所以标签页模式只能依赖服务端 ASR，浏览器 ASR 自动禁用。这也是为什么架构设计了双路 ASR 而不是只依赖一路。
+
+**Q: 声音克隆的音质不好怎么办？**
+
+> 遇到过两个问题：
+> 1. **参考音频太短**——CosyVoice2 需要足够的声纹特征，1-2 秒的音频克隆效果很差。所以设定了 5 秒（80000 samples @16kHz）的采集时长，是多次实验后的平衡点——再长用户等太久，再短音质不够。
+> 2. **参考音频包含背景噪声**——如果采集时环境嘈杂，克隆出的声音会带噪。目前的方案是依赖 `echoCancellation` 和 `noiseSuppression` 两个 getUserMedia 约束，在源头减噪。更好的方案是加一个前端 VAD 质量检测，如果能量太低或噪声占比太高就重新采集。
+
+**Q: LLM 翻译有时候格式不对（JSON 解析失败）怎么处理？**
+
+> 流式输出时 LLM 偶尔会输出不规范的 JSON——比如多余的逗号、未闭合的引号、或者在 JSON 外面加了 markdown 代码块标记。处理策略：
+> 1. 流式阶段用 Regex 提取 `target` 字段，不做完整 JSON 解析，容错性天然就高
+> 2. 完整输出后先 `JSON.parse`，失败则用 Regex 兜底提取各字段
+> 3. 如果连 Regex 都提取不到，把整个输出当纯文本译文，至少保证用户能看到东西
+>
+> 另外 Prompt 里明确要求了"输出纯 JSON，不要代码块"，并在输入里预填了 `{` 引导 LLM 直接输出 JSON，减少格式错误的概率。
+
+**Q: 文件上传模式遇到过什么问题？**
+
+> **FFmpeg 转码兼容性。** 用户上传的格式五花八门——mkv、avi、webm、甚至带 DRM 的 m4a。FFmpeg 参数要覆盖所有情况：`-ac 1 -ar 16000 -f s16le -acodec pcm_s16le`，强制输出单声道 16kHz PCM16。遇到过视频文件没有音轨的情况，FFmpeg 会报错，需要 catch 住返回友好提示。
+>
+> **大文件内存问题。** 最初是把整个 PCM 数据存在内存里再分块发送，几百 MB 的视频直接 OOM。改成流式处理后——FFmpeg 边转码边输出，客户端收到 0.5 秒的块就立即通过 WebSocket 发送，内存占用恒定。
+
+**Q: 不同浏览器的兼容性问题？**
+
+> 主要问题集中在三个 API：
+> 1. **Web Speech API**——Chrome/Edge 支持好，Firefox 部分支持（无 interim results），Safari 需要用户手动授权且 `continuous` 模式不稳定。所以服务端 ASR 是必须的兜底。
+> 2. **Document PiP**——只有 Chrome 116+ 支持，Firefox 和 Safari 不支持。用 `'documentPictureInPicture' in window` 检测，不支持就降级 `window.open()`。
+> 3. **getDisplayMedia 标签页音频**——Chrome 支持 `{audio: true}`，但 Firefox 的 `getDisplayMedia` 不支持音频捕获。所以标签页捕获模式标注了"仅 Chromium 浏览器"。
+>
+> 总体策略是：核心功能（麦克风 ASR + 翻译 + 字幕）全浏览器可用，高级功能（PiP、标签页捕获、声音克隆）渐进增强。
+
+**Q: 项目开发过程中有什么设计上的返工？**
+
+> 最大的一次返工是 **ASR 架构从单路改为双路**。最初只用服务端 Whisper ASR，体验上有明显的延迟感——用户说完一句话要等 1-2 秒才看到文字。后来加入浏览器 Web Speech API 做实时字幕显示，服务端 ASR 负责准确识别和翻译触发，两路并行互补。这次改动涉及前后端协议调整、字幕渲染逻辑重写（要合并两路结果）、以及 LocalAgreement-2 算法的引入。
+>
+> 另一次是 **TTS 从全文合成改为拆段合成**。早期等整句翻译完再合成，延迟 5-6 秒，同传体验很差。改成按标点拆分、只合成第一段（≤50 字符），延迟降到 2.5-3 秒。代价是后半段译文没有语音播报，但同传场景下用户持续在说话，TTS 本来就跟不上全文。
