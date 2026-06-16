@@ -422,6 +422,17 @@ section {
 .file-tree .t-file { color: #e8e8e8; }
 .file-tree .t-cm { color: #555; font-size: 12px; }
 
+/* ==================== Protocol Why Grid ==================== */
+.protocol-why-grid {
+  display: grid; grid-template-columns: 1fr 1fr; grid-auto-rows: 1fr; gap: 16px;
+}
+.protocol-why-card {
+  background: var(--bg-card); border: 1px solid #222; border-radius: 10px; padding: 18px;
+  display: flex; flex-direction: column;
+}
+.protocol-why-card h4 { font-size: 14px; margin-bottom: 8px; }
+.protocol-why-card p { font-size: 13px; color: var(--text-dim); line-height: 1.6; flex: 1; }
+
 /* ==================== Spectrum Demo ==================== */
 .spectrum-demo {
   position: relative; margin-bottom: 20px; border-radius: 10px; overflow: hidden;
@@ -511,6 +522,7 @@ section {
   .lang-matrix { max-width: 100%; }
   .lang-matrix .cell { padding: 10px 4px; font-size: 12px; }
   .provider-grid { grid-template-columns: 1fr; }
+  .protocol-why-grid { grid-template-columns: 1fr; grid-auto-rows: auto; }
   .protocol-grid { grid-template-columns: 1fr; }
   .latency-mode-compare { grid-template-columns: 1fr; }
   .latency-track { min-width: 500px; }

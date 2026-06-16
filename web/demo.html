@@ -1147,22 +1147,22 @@
   <!-- Why designed this way -->
   <div class="reveal" style="max-width:1100px; margin-bottom:32px;">
     <h3 style="font-size:18px; margin-bottom:16px;">为什么这样设计协议？</h3>
-    <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
-      <div style="background:var(--bg-card); border:1px solid #222; border-radius:10px; padding:18px;">
-        <h4 style="font-size:14px; color:var(--green); margin-bottom:8px;">为什么用二进制帧传音频？</h4>
-        <p style="font-size:13px; color:var(--text-dim); line-height:1.6;">PCM16 音频是连续的字节流，每秒 32KB（16kHz × 2 字节）。如果用 JSON + Base64 编码，体积膨胀 33%，且每帧都要 JSON.parse 解析——对实时音频流来说是不必要的开销。直接发 ArrayBuffer，服务端 <code>isBinary</code> 判断即可。</p>
+    <div class="protocol-why-grid">
+      <div class="protocol-why-card">
+        <h4 style="color:var(--green);">为什么用二进制帧传音频？</h4>
+        <p>PCM16 音频是连续的字节流，每秒 32KB（16kHz × 2 字节）。如果用 JSON + Base64 编码，体积膨胀 33%，且每帧都要 JSON.parse 解析——对实时音频流来说是不必要的开销。直接发 ArrayBuffer，服务端 <code>isBinary</code> 判断即可。</p>
       </div>
-      <div style="background:var(--bg-card); border:1px solid #222; border-radius:10px; padding:18px;">
-        <h4 style="font-size:14px; color:var(--gold); margin-bottom:8px;">为什么声纹/TTS 要 JSON 头 + Binary 两帧？</h4>
-        <p style="font-size:13px; color:var(--text-dim); line-height:1.6;">声纹样本和 TTS 音频都是「一次性的大二进制数据」，需要元信息（采样率、格式、大小）。把元信息放 JSON 头、数据放下一帧 Binary，比把整个数据 Base64 编码塞进 JSON 高效得多。用 <code>pendingVoiceSample</code> 标志位同步区分「下一帧是声纹还是普通音频」。</p>
+      <div class="protocol-why-card">
+        <h4 style="color:var(--gold);">为什么声纹/TTS 要 JSON 头 + Binary 两帧？</h4>
+        <p>声纹样本和 TTS 音频都是「一次性的大二进制数据」，需要元信息（采样率、格式、大小）。把元信息放 JSON 头、数据放下一帧 Binary，比把整个数据 Base64 编码塞进 JSON 高效得多。用 <code>pendingVoiceSample</code> 标志位同步区分「下一帧是声纹还是普通音频」。</p>
       </div>
-      <div style="background:var(--bg-card); border:1px solid #222; border-radius:10px; padding:18px;">
-        <h4 style="font-size:14px; color:#e8e8e8; margin-bottom:8px;">为什么 ASR 结果分 partial 和 final？</h4>
-        <p style="font-size:13px; color:var(--text-dim); line-height:1.6;">同传要求「边说边出字幕」。<code>asr_partial</code> 携带 committed（已确认）+ pending（待确认）两部分，前端分别用白色/灰色渲染，用户能看到识别在实时进行。<code>asr_final</code> 是最终结果，触发翻译流程。两者分开让前端可以独立处理显示和翻译逻辑。</p>
+      <div class="protocol-why-card">
+        <h4 style="color:#e8e8e8;">为什么 ASR 结果分 partial 和 final？</h4>
+        <p>同传要求「边说边出字幕」。<code>asr_partial</code> 携带 committed（已确认）+ pending（待确认）两部分，前端分别用白色/灰色渲染，用户能看到识别在实时进行。<code>asr_final</code> 是最终结果，触发翻译流程。两者分开让前端可以独立处理显示和翻译逻辑。</p>
       </div>
-      <div style="background:var(--bg-card); border:1px solid #222; border-radius:10px; padding:18px;">
-        <h4 style="font-size:14px; color:#e88; margin-bottom:8px;">为什么翻译也分 partial 和完整？</h4>
-        <p style="font-size:13px; color:var(--text-dim); line-height:1.6;">LLM 流式输出时，服务端用 Regex 从不完整 JSON 提取 target 字段，通过 <code>translation_partial</code> 推送——用户不用等整句翻译完就能看到部分译文。<code>translation</code> 是最终结果，同时携带 source（用于字幕对齐）。<code>correction</code> 单独一种类型，因为它修改的是之前的句子而非当前句。</p>
+      <div class="protocol-why-card">
+        <h4 style="color:#e88;">为什么翻译也分 partial 和完整？</h4>
+        <p>LLM 流式输出时，服务端用 Regex 从不完整 JSON 提取 target 字段，通过 <code>translation_partial</code> 推送——用户不用等整句翻译完就能看到部分译文。<code>translation</code> 是最终结果，同时携带 source（用于字幕对齐）。<code>correction</code> 单独一种类型，因为它修改的是之前的句子而非当前句。</p>
       </div>
     </div>
   </div>
