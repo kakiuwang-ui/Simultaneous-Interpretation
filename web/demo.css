@@ -252,14 +252,39 @@ section {
 .tradeoff-chosen {
   background: var(--green-dim); border: 1px solid var(--green); border-radius: 8px;
   padding: 8px 14px; font-size: 14px; font-weight: 600; color: var(--green); white-space: nowrap;
+  cursor: pointer; transition: background 0.2s, box-shadow 0.2s;
 }
+.tradeoff-chosen:hover { box-shadow: 0 0 12px var(--green-dim); }
+.tradeoff-chosen.active-chosen { box-shadow: 0 0 12px var(--green-dim); }
 .tradeoff-alt {
   font-size: 13px; color: #555; line-height: 1.4;
 }
-.tradeoff-alt span { display: inline-block; background: #1a1a1a; border-radius: 4px; padding: 2px 8px; margin: 2px 4px 2px 0; }
+.tradeoff-alt span {
+  display: inline-block; background: #1a1a1a; border-radius: 4px; padding: 2px 8px; margin: 2px 4px 2px 0;
+  cursor: pointer; transition: background 0.2s, color 0.2s, border-color 0.2s;
+  border: 1px solid transparent;
+}
+.tradeoff-alt span:hover { background: #2a1a1a; color: #e88; border-color: #e88; }
+.tradeoff-alt span.active-reject { background: #2a1a1a; color: #e88; border-color: #e88; }
 .tradeoff-reason {
   font-size: 13px; color: var(--text-dim); line-height: 1.5; border-top: 1px solid #1a1a1a; padding-top: 10px;
 }
+.tradeoff-reject-detail {
+  font-size: 13px; line-height: 1.6; padding: 0; max-height: 0; overflow: hidden;
+  transition: max-height 0.4s ease, padding 0.3s ease, opacity 0.3s ease; opacity: 0;
+}
+.tradeoff-reject-detail.show {
+  max-height: 300px; padding: 12px 0 0; opacity: 1;
+}
+.tradeoff-reject-detail .reject-name {
+  font-weight: 600; margin-right: 6px;
+}
+.tradeoff-reject-detail .reject-label {
+  font-size: 11px; padding: 2px 6px; border-radius: 3px; margin-right: 8px; vertical-align: middle;
+}
+.tradeoff-reject-detail .reject-label.bad { background: #2a1a1a; color: #e88; }
+.tradeoff-reject-detail .reject-label.good { background: var(--green-dim); color: var(--green); }
+.tradeoff-reject-detail .reject-text { color: var(--text-dim); }
 
 /* ==================== Correction Pipeline ==================== */
 .correction-pipeline {
@@ -326,6 +351,10 @@ section {
   text-align: right; padding-right: 16px;
 }
 .latency-bar-area { flex: 1; position: relative; height: 100%; }
+.latency-time {
+  width: 80px; flex-shrink: 0; text-align: right; font-size: 12px;
+  font-family: var(--mono); color: var(--text-dim); font-weight: 600; padding-left: 8px;
+}
 .latency-bar {
   position: absolute; height: 28px; border-radius: 6px; top: 4px;
   display: flex; align-items: center; padding: 0 10px;
