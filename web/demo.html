@@ -1,0 +1,1540 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 同声传译助手 — 技术演示</title>
+<style>
+/* ==================== CSS Variables & Reset ==================== */
+:root {
+  --bg: #0a0a0a;
+  --bg-card: #141414;
+  --bg-card-hover: #1a1a1a;
+  --text: #e8e8e8;
+  --text-dim: #888;
+  --green: #50c878;
+  --green-dim: #50c87833;
+  --gold: #d4a020;
+  --gold-dim: #d4a02033;
+  --code-bg: #0d1117;
+  --code-border: #21262d;
+  --nav-h: 56px;
+  --section-pad: 100px;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", sans-serif;
+  --mono: "SF Mono", "Fira Code", "Cascadia Code", Consolas, monospace;
+}
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: var(--nav-h); }
+body { background: var(--bg); color: var(--text); font-family: var(--font); line-height: 1.6; overflow-x: hidden; }
+a { color: var(--green); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* ==================== Navigation ==================== */
+nav {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+  height: var(--nav-h); display: flex; align-items: center; justify-content: center; gap: 32px;
+  background: rgba(10,10,10,0.85); backdrop-filter: blur(12px); border-bottom: 1px solid #222;
+}
+nav a {
+  color: var(--text-dim); font-size: 14px; letter-spacing: 0.5px; transition: color 0.3s;
+}
+nav a.active, nav a:hover { color: var(--green); }
+
+/* ==================== Sections ==================== */
+section {
+  min-height: 100vh; padding: var(--section-pad) 40px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+}
+.section-title {
+  font-size: 36px; font-weight: 700; margin-bottom: 16px; text-align: center;
+}
+.section-subtitle {
+  color: var(--text-dim); font-size: 18px; margin-bottom: 60px; text-align: center; max-width: 700px;
+}
+.accent { color: var(--green); }
+.gold { color: var(--gold); }
+
+/* ==================== Reveal Animation ==================== */
+.reveal {
+  opacity: 0; transform: translateY(40px); transition: opacity 0.7s ease, transform 0.7s ease;
+}
+.reveal.visible {
+  opacity: 1; transform: translateY(0);
+}
+.reveal-delay-1 { transition-delay: 0.1s; }
+.reveal-delay-2 { transition-delay: 0.2s; }
+.reveal-delay-3 { transition-delay: 0.3s; }
+.reveal-delay-4 { transition-delay: 0.4s; }
+.reveal-delay-5 { transition-delay: 0.5s; }
+
+/* ==================== Hero ==================== */
+#hero {
+  position: relative; text-align: center; padding-top: 0;
+}
+#hero h1 {
+  font-size: 64px; font-weight: 800; letter-spacing: -1px; margin-bottom: 24px;
+}
+#hero h1 span { color: var(--green); }
+.typewriter {
+  font-size: 22px; color: var(--text-dim); height: 34px;
+  border-right: 2px solid var(--green); white-space: nowrap; overflow: hidden;
+  display: inline-block; animation: blink 0.8s step-end infinite;
+}
+@keyframes blink { 50% { border-color: transparent; } }
+.hero-wave {
+  position: absolute; bottom: 0; left: 0; right: 0; height: 120px; opacity: 0.15;
+}
+.scroll-hint {
+  position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%);
+  animation: bounce 2s infinite;
+}
+.scroll-hint svg { width: 28px; height: 28px; stroke: var(--text-dim); fill: none; stroke-width: 2; }
+@keyframes bounce { 0%,100%{ transform: translateX(-50%) translateY(0); } 50%{ transform: translateX(-50%) translateY(12px); } }
+
+/* ==================== Architecture ==================== */
+.arch-svg-wrap {
+  width: 100%; max-width: 1000px; margin-bottom: 48px;
+}
+.arch-svg-wrap svg { width: 100%; height: auto; }
+.arch-paths {
+  display: flex; gap: 24px; flex-wrap: wrap; justify-content: center;
+}
+.arch-path-card {
+  background: var(--bg-card); border: 1px solid #222; border-radius: 12px;
+  padding: 20px 28px; min-width: 200px; text-align: center;
+}
+.arch-path-card .icon { font-size: 28px; margin-bottom: 8px; }
+.arch-path-card h4 { font-size: 15px; margin-bottom: 4px; }
+.arch-path-card p { font-size: 13px; color: var(--text-dim); }
+
+/* Pipeline node animation */
+.pipe-node { opacity: 0; animation: fadeInNode 0.5s ease forwards; }
+.pipe-line { stroke-dasharray: 1000; stroke-dashoffset: 1000; animation: drawLine 1.5s ease forwards; }
+@keyframes fadeInNode { to { opacity: 1; } }
+@keyframes drawLine { to { stroke-dashoffset: 0; } }
+
+/* ==================== Algorithm Grid ==================== */
+.algo-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 32px; max-width: 1200px; width: 100%;
+}
+.algo-card {
+  background: var(--bg-card); border: 1px solid #222; border-radius: 16px;
+  padding: 32px; overflow: hidden;
+}
+.algo-card h3 { font-size: 20px; margin-bottom: 6px; }
+.algo-card .algo-desc { color: var(--text-dim); font-size: 14px; margin-bottom: 20px; }
+.algo-card pre {
+  background: var(--code-bg); border: 1px solid var(--code-border); border-radius: 8px;
+  padding: 16px; overflow-x: auto; font-family: var(--mono); font-size: 13px; line-height: 1.65;
+  color: #c9d1d9; max-height: 320px;
+}
+.algo-card .visual {
+  background: var(--code-bg); border: 1px solid var(--code-border); border-radius: 8px;
+  padding: 20px; margin-bottom: 16px; font-family: var(--mono); font-size: 14px;
+  text-align: center;
+}
+/* Syntax highlight classes */
+.kw { color: #ff7b72; } /* keyword */
+.fn { color: #d2a8ff; } /* function */
+.str { color: #a5d6ff; } /* string */
+.cm { color: #8b949e; } /* comment */
+.num { color: #79c0ff; } /* number */
+.op { color: #ff7b72; } /* operator */
+.prop { color: #7ee787; } /* property */
+
+/* ==================== Tech Stack ==================== */
+.stack-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; max-width: 1100px; width: 100%;
+}
+.stack-col h3 {
+  font-size: 14px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--green);
+  margin-bottom: 16px; padding-bottom: 8px; border-bottom: 1px solid #222;
+}
+.stack-item {
+  background: var(--bg-card); border: 1px solid #222; border-radius: 10px;
+  padding: 16px 20px; margin-bottom: 12px; transition: border-color 0.3s, transform 0.3s;
+}
+.stack-item:hover { border-color: var(--green); transform: translateY(-2px); }
+.stack-item h4 { font-size: 15px; margin-bottom: 4px; }
+.stack-item p { font-size: 12px; color: var(--text-dim); }
+.badge {
+  display: inline-block; background: var(--green-dim); color: var(--green);
+  border: 1px solid var(--green); border-radius: 20px; padding: 6px 18px;
+  font-size: 14px; font-weight: 600; margin-top: 32px;
+}
+
+/* ==================== Features ==================== */
+.feat-section { max-width: 1100px; width: 100%; }
+.feat-row {
+  display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; margin-bottom: 40px;
+}
+.feat-card {
+  background: var(--bg-card); border: 1px solid #222; border-radius: 14px;
+  padding: 24px; flex: 1; min-width: 180px; max-width: 200px; text-align: center;
+  transition: border-color 0.3s, transform 0.3s;
+}
+.feat-card:hover { border-color: var(--gold); transform: translateY(-3px); }
+.feat-card .icon { font-size: 32px; margin-bottom: 12px; }
+.feat-card h4 { font-size: 15px; margin-bottom: 6px; }
+.feat-card p { font-size: 12px; color: var(--text-dim); }
+.feat-detail {
+  background: var(--bg-card); border: 1px solid #222; border-radius: 16px;
+  padding: 28px 32px; margin-bottom: 24px; max-width: 1100px; width: 100%;
+}
+.feat-detail .feat-header {
+  display: flex; align-items: center; gap: 16px; margin-bottom: 16px;
+}
+.feat-detail .feat-header .icon { font-size: 32px; flex-shrink: 0; }
+.feat-detail .feat-header h3 { font-size: 20px; }
+.feat-detail .feat-header .feat-badge {
+  font-size: 11px; color: var(--green); background: var(--green-dim); border: 1px solid var(--green);
+  border-radius: 4px; padding: 2px 8px; margin-left: auto; white-space: nowrap;
+}
+.feat-detail .feat-body { color: var(--text-dim); font-size: 14px; line-height: 1.7; }
+.feat-detail .feat-body strong { color: var(--text); font-weight: 600; }
+.feat-detail .feat-flow {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin: 14px 0; font-family: var(--mono); font-size: 13px;
+}
+.feat-detail .feat-flow .step {
+  background: var(--code-bg); border: 1px solid var(--code-border); border-radius: 6px;
+  padding: 6px 12px; white-space: nowrap;
+}
+.feat-detail .feat-flow .arrow { color: var(--green); font-weight: 700; }
+.feat-detail pre {
+  background: var(--code-bg); border: 1px solid var(--code-border); border-radius: 8px;
+  padding: 14px; font-family: var(--mono); font-size: 12px; line-height: 1.6;
+  color: #c9d1d9; overflow-x: auto; margin-top: 14px;
+}
+.feat-extras {
+  display: flex; gap: 12px; flex-wrap: wrap; justify-content: center;
+}
+.feat-tag {
+  background: var(--bg-card); border: 1px solid #222; border-radius: 8px;
+  padding: 8px 16px; font-size: 13px; color: var(--text-dim);
+}
+
+/* ==================== Language Matrix ==================== */
+.lang-matrix {
+  display: grid; grid-template-columns: 80px repeat(4, 1fr); gap: 0;
+  max-width: 520px; width: 100%; margin-top: 48px;
+  border: 1px solid #222; border-radius: 12px; overflow: hidden;
+  background: var(--bg-card);
+}
+.lang-matrix .cell {
+  padding: 14px 8px; text-align: center; font-size: 14px;
+  border-right: 1px solid #1a1a1a; border-bottom: 1px solid #1a1a1a;
+}
+.lang-matrix .cell:nth-child(5n) { border-right: none; }
+.lang-matrix .cell.header { color: var(--green); font-weight: 700; font-size: 13px; background: #0d0d0d; }
+.lang-matrix .cell.diag { color: #333; }
+.lang-matrix .cell.supported { color: var(--green); font-weight: 600; cursor: default; transition: background 0.2s; }
+.lang-matrix .cell.supported:hover { background: var(--green-dim); }
+.lang-matrix .cell .dir-label { display: block; font-size: 10px; color: var(--text-dim); margin-top: 2px; }
+
+/* ==================== Algo Params ==================== */
+.algo-params {
+  display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px;
+}
+.algo-param {
+  background: var(--code-bg); border: 1px solid var(--code-border); border-radius: 6px;
+  padding: 6px 12px; font-family: var(--mono); font-size: 12px;
+}
+.algo-param .val { color: var(--green); font-weight: 700; }
+.algo-param .lbl { color: var(--text-dim); }
+
+/* ==================== Tradeoffs ==================== */
+.tradeoff-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 24px; max-width: 1100px; width: 100%;
+}
+.tradeoff-card {
+  background: var(--bg-card); border: 1px solid #222; border-radius: 14px;
+  padding: 24px 28px; transition: border-color 0.3s;
+}
+.tradeoff-card:hover { border-color: #333; }
+.tradeoff-card h4 { font-size: 15px; color: var(--text-dim); margin-bottom: 10px; }
+.tradeoff-row {
+  display: flex; gap: 16px; align-items: flex-start; margin-bottom: 12px;
+}
+.tradeoff-chosen {
+  background: var(--green-dim); border: 1px solid var(--green); border-radius: 8px;
+  padding: 8px 14px; font-size: 14px; font-weight: 600; color: var(--green); white-space: nowrap;
+}
+.tradeoff-alt {
+  font-size: 13px; color: #555; line-height: 1.4;
+}
+.tradeoff-alt span { display: inline-block; background: #1a1a1a; border-radius: 4px; padding: 2px 8px; margin: 2px 4px 2px 0; }
+.tradeoff-reason {
+  font-size: 13px; color: var(--text-dim); line-height: 1.5; border-top: 1px solid #1a1a1a; padding-top: 10px;
+}
+
+/* ==================== Correction Pipeline ==================== */
+.correction-pipeline {
+  display: flex; flex-direction: column; gap: 0; max-width: 900px; width: 100%;
+}
+.correction-layer {
+  background: var(--bg-card); border: 1px solid #222; border-radius: 14px;
+  padding: 24px 28px;
+}
+.correction-layer .layer-badge {
+  display: inline-block; font-size: 11px; font-weight: 700;
+  padding: 3px 10px; border-radius: 4px; margin-bottom: 10px;
+  text-transform: uppercase; letter-spacing: 1px;
+}
+.correction-layer .layer-badge.l1 { background: var(--green-dim); color: var(--green); }
+.correction-layer .layer-badge.l2 { background: var(--gold-dim); color: var(--gold); }
+.correction-layer .layer-badge.l3 { background: #7b68ee33; color: #7b68ee; }
+.correction-layer .layer-badge.l4 { background: #ff6b6b33; color: #ff6b6b; }
+.correction-layer h4 { font-size: 17px; margin-bottom: 8px; }
+.correction-layer .layer-desc { color: var(--text-dim); font-size: 13px; line-height: 1.6; }
+.correction-layer .layer-desc strong { color: var(--text); }
+.correction-layer pre {
+  background: var(--code-bg); border: 1px solid var(--code-border); border-radius: 8px;
+  padding: 12px; font-family: var(--mono); font-size: 12px; line-height: 1.5;
+  color: #c9d1d9; overflow-x: auto; margin-top: 10px;
+}
+.correction-connector {
+  width: 2px; height: 24px; background: #333; margin: 0 auto; position: relative;
+}
+.correction-connector::after {
+  content: '▼'; position: absolute; bottom: -10px; left: 50%; transform: translateX(-50%);
+  color: #555; font-size: 10px;
+}
+.subtitle-states { display: flex; gap: 16px; margin-top: 12px; flex-wrap: wrap; }
+.subtitle-state {
+  font-family: var(--mono); font-size: 14px; padding: 8px 16px;
+  border-radius: 6px; background: var(--code-bg); border: 1px solid var(--code-border);
+}
+.subtitle-state.final { color: #fff; }
+.subtitle-state.partial { color: #666; }
+.subtitle-state.corrected {
+  color: var(--gold); animation: flash-correct-demo 2.4s ease infinite;
+  position: relative;
+}
+.subtitle-state.corrected::after {
+  content: '已修正'; font-size: 9px; background: var(--gold-dim); color: var(--gold);
+  border: 1px solid var(--gold); border-radius: 3px; padding: 1px 5px;
+  position: absolute; top: -8px; right: -8px;
+}
+@keyframes flash-correct-demo {
+  0%, 100% { background: var(--code-bg); }
+  30% { background: var(--gold-dim); }
+  60% { background: var(--code-bg); }
+}
+
+/* ==================== Latency Pipeline ==================== */
+.latency-wrap { max-width: 1100px; width: 100%; }
+.latency-track {
+  display: flex; flex-direction: column; gap: 6px; min-width: 700px; padding: 20px 0;
+}
+.latency-row { display: flex; align-items: center; height: 36px; }
+.latency-label {
+  width: 140px; flex-shrink: 0; font-size: 13px; color: var(--text-dim);
+  text-align: right; padding-right: 16px;
+}
+.latency-bar-area { flex: 1; position: relative; height: 100%; }
+.latency-bar {
+  position: absolute; height: 28px; border-radius: 6px; top: 4px;
+  display: flex; align-items: center; padding: 0 10px;
+  font-size: 11px; font-family: var(--mono); font-weight: 600; white-space: nowrap;
+}
+.latency-bar.green { background: var(--green-dim); border: 1px solid var(--green); color: var(--green); }
+.latency-bar.gold { background: var(--gold-dim); border: 1px solid var(--gold); color: var(--gold); }
+.latency-bar.dim { background: #33333366; border: 1px solid #444; color: var(--text-dim); }
+.latency-axis {
+  display: flex; justify-content: space-between; margin-left: 140px;
+  font-size: 11px; color: var(--text-dim); font-family: var(--mono);
+  border-top: 1px solid #222; padding-top: 8px; margin-top: 4px;
+}
+.latency-mode-compare {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 32px;
+}
+.latency-mode-card {
+  background: var(--bg-card); border: 1px solid #222; border-radius: 12px; padding: 20px 24px;
+}
+.latency-mode-card h4 { font-size: 15px; margin-bottom: 12px; }
+.latency-mode-card .metric {
+  display: flex; justify-content: space-between; padding: 6px 0;
+  font-size: 13px; border-bottom: 1px solid #1a1a1a;
+}
+.latency-mode-card .metric:last-child { border-bottom: none; }
+.latency-mode-card .metric .val { color: var(--green); font-family: var(--mono); font-weight: 600; }
+
+/* ==================== Multi-Provider ==================== */
+.provider-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px;
+  max-width: 1100px; width: 100%;
+}
+.provider-col {
+  background: var(--bg-card); border: 1px solid #222; border-radius: 14px;
+  padding: 24px; overflow: hidden;
+}
+.provider-col h3 { font-size: 16px; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid #222; }
+.provider-item {
+  display: flex; align-items: center; gap: 10px; padding: 10px 0;
+  border-bottom: 1px solid #111; font-size: 14px;
+}
+.provider-item:last-child { border-bottom: none; }
+.provider-item .p-name { font-weight: 600; min-width: 90px; }
+.provider-item .p-model { color: var(--text-dim); font-family: var(--mono); font-size: 12px; }
+.provider-item .p-tag {
+  font-size: 10px; border-radius: 3px; padding: 1px 6px; margin-left: auto; white-space: nowrap;
+}
+.provider-item .p-tag.default { background: var(--green-dim); color: var(--green); border: 1px solid var(--green); }
+.provider-item .p-tag.fallback { background: var(--gold-dim); color: var(--gold); border: 1px solid var(--gold); }
+.provider-arrow { text-align: center; color: #444; font-size: 12px; padding: 4px 0; }
+.provider-env {
+  margin-top: 12px; background: var(--code-bg); border: 1px solid var(--code-border);
+  border-radius: 6px; padding: 10px 14px; font-family: var(--mono); font-size: 11px;
+  color: #c9d1d9; line-height: 1.6;
+}
+
+/* ==================== Project Structure ==================== */
+.structure-wrap { max-width: 700px; width: 100%; }
+.file-tree {
+  background: var(--code-bg); border: 1px solid var(--code-border); border-radius: 12px;
+  padding: 28px 32px; font-family: var(--mono); font-size: 14px; line-height: 2;
+  color: #c9d1d9;
+}
+.file-tree .t-dir { color: var(--green); font-weight: 600; }
+.file-tree .t-file { color: #e8e8e8; }
+.file-tree .t-cm { color: #555; font-size: 12px; }
+
+/* ==================== Counters ==================== */
+#stats { background: #0e0e0e; }
+.counter-row {
+  display: flex; gap: 48px; flex-wrap: wrap; justify-content: center; max-width: 1000px;
+}
+.counter {
+  text-align: center; min-width: 140px;
+}
+.counter .num {
+  font-size: 56px; font-weight: 800; color: var(--green);
+  font-variant-numeric: tabular-nums;
+}
+.counter .label {
+  font-size: 14px; color: var(--text-dim); margin-top: 4px;
+}
+
+/* ==================== CTA ==================== */
+#cta { text-align: center; }
+.cta-btn {
+  display: inline-block; background: var(--green); color: #0a0a0a; font-size: 20px;
+  font-weight: 700; padding: 18px 48px; border-radius: 12px;
+  transition: transform 0.2s, box-shadow 0.2s; box-shadow: 0 0 30px var(--green-dim);
+}
+.cta-btn:hover { transform: scale(1.05); box-shadow: 0 0 50px var(--green-dim); text-decoration: none; }
+.cta-links { margin-top: 24px; display: flex; gap: 24px; justify-content: center; }
+.cta-links a { color: var(--text-dim); font-size: 14px; }
+
+/* ==================== Responsive ==================== */
+@media (max-width: 900px) {
+  .algo-grid { grid-template-columns: 1fr; }
+  .stack-grid { grid-template-columns: 1fr 1fr; }
+  .tradeoff-grid { grid-template-columns: 1fr; }
+  #hero h1 { font-size: 40px; }
+  section { padding: 80px 20px; }
+  nav { gap: 10px; overflow-x: auto; justify-content: flex-start; padding: 0 16px; }
+  nav a { font-size: 12px; white-space: nowrap; }
+  .counter-row { gap: 24px; }
+  .counter .num { font-size: 40px; }
+  .lang-matrix { max-width: 100%; }
+  .lang-matrix .cell { padding: 10px 4px; font-size: 12px; }
+  .provider-grid { grid-template-columns: 1fr; }
+  .latency-mode-compare { grid-template-columns: 1fr; }
+  .latency-track { min-width: 500px; }
+  .latency-label { width: 100px; font-size: 11px; }
+  .latency-axis { margin-left: 100px; }
+}
+@media (max-width: 600px) {
+  .stack-grid { grid-template-columns: 1fr; }
+  .feat-card { max-width: none; }
+}
+</style>
+</head>
+<body>
+
+<!-- ==================== Navigation ==================== -->
+<nav>
+  <a href="#hero">首页</a>
+  <a href="#arch">架构</a>
+  <a href="#algo">算法</a>
+  <a href="#correction">纠正</a>
+  <a href="#latency">延迟</a>
+  <a href="#stack">技术栈</a>
+  <a href="#tradeoffs">选型</a>
+  <a href="#providers">Provider</a>
+  <a href="#features">功能</a>
+  <a href="#structure">结构</a>
+  <a href="#stats">数据</a>
+  <a href="#cta">Demo</a>
+</nav>
+
+<!-- ==================== 1. Hero ==================== -->
+<section id="hero">
+  <h1 class="reveal">AI <span>同声传译</span>助手</h1>
+  <div class="typewriter" id="typewriter"></div>
+  <svg class="hero-wave" viewBox="0 0 1440 120" preserveAspectRatio="none">
+    <g id="wave-group"></g>
+  </svg>
+  <div class="scroll-hint">
+    <svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+  </div>
+</section>
+
+<!-- ==================== 2. Architecture ==================== -->
+<section id="arch">
+  <h2 class="section-title reveal">系统架构</h2>
+  <p class="section-subtitle reveal">实时音频流经 6 个处理节点，端到端延迟 &lt; 3 秒</p>
+
+  <div class="arch-svg-wrap reveal">
+    <svg viewBox="0 0 960 160" id="pipeline-svg">
+      <!-- Nodes -->
+      <g class="pipe-node" style="animation-delay:0.1s">
+        <rect x="10" y="50" width="120" height="60" rx="10" fill="#141414" stroke="#50c878" stroke-width="1.5"/>
+        <text x="70" y="85" text-anchor="middle" fill="#e8e8e8" font-size="14" font-family="sans-serif">Browser</text>
+      </g>
+      <g class="pipe-node" style="animation-delay:0.3s">
+        <rect x="175" y="50" width="120" height="60" rx="10" fill="#141414" stroke="#50c878" stroke-width="1.5"/>
+        <text x="235" y="78" text-anchor="middle" fill="#e8e8e8" font-size="14" font-family="sans-serif">WebSocket</text>
+        <text x="235" y="96" text-anchor="middle" fill="#888" font-size="11" font-family="sans-serif">Binary Audio</text>
+      </g>
+      <g class="pipe-node" style="animation-delay:0.5s">
+        <rect x="340" y="50" width="120" height="60" rx="10" fill="#141414" stroke="#d4a020" stroke-width="1.5"/>
+        <text x="400" y="78" text-anchor="middle" fill="#e8e8e8" font-size="14" font-family="sans-serif">ASR</text>
+        <text x="400" y="96" text-anchor="middle" fill="#888" font-size="11" font-family="sans-serif">VAD + STT</text>
+      </g>
+      <g class="pipe-node" style="animation-delay:0.7s">
+        <rect x="505" y="50" width="120" height="60" rx="10" fill="#141414" stroke="#d4a020" stroke-width="1.5"/>
+        <text x="565" y="78" text-anchor="middle" fill="#e8e8e8" font-size="14" font-family="sans-serif">LLM</text>
+        <text x="565" y="96" text-anchor="middle" fill="#888" font-size="11" font-family="sans-serif">Translation</text>
+      </g>
+      <g class="pipe-node" style="animation-delay:0.9s">
+        <rect x="670" y="50" width="120" height="60" rx="10" fill="#141414" stroke="#d4a020" stroke-width="1.5"/>
+        <text x="730" y="78" text-anchor="middle" fill="#e8e8e8" font-size="14" font-family="sans-serif">TTS</text>
+        <text x="730" y="96" text-anchor="middle" fill="#888" font-size="11" font-family="sans-serif">CosyVoice2</text>
+      </g>
+      <g class="pipe-node" style="animation-delay:1.1s">
+        <rect x="835" y="50" width="120" height="60" rx="10" fill="#141414" stroke="#50c878" stroke-width="1.5"/>
+        <text x="895" y="85" text-anchor="middle" fill="#e8e8e8" font-size="14" font-family="sans-serif">Speaker</text>
+      </g>
+      <!-- Arrows -->
+      <line class="pipe-line" x1="130" y1="80" x2="175" y2="80" stroke="#50c878" stroke-width="2" style="animation-delay:0.2s"/>
+      <line class="pipe-line" x1="295" y1="80" x2="340" y2="80" stroke="#50c878" stroke-width="2" style="animation-delay:0.4s"/>
+      <line class="pipe-line" x1="460" y1="80" x2="505" y2="80" stroke="#d4a020" stroke-width="2" style="animation-delay:0.6s"/>
+      <line class="pipe-line" x1="625" y1="80" x2="670" y2="80" stroke="#d4a020" stroke-width="2" style="animation-delay:0.8s"/>
+      <line class="pipe-line" x1="790" y1="80" x2="835" y2="80" stroke="#50c878" stroke-width="2" style="animation-delay:1.0s"/>
+      <!-- Arrow heads -->
+      <polygon class="pipe-node" points="175,75 175,85 165,80" fill="#50c878" style="animation-delay:0.2s"/>
+      <polygon class="pipe-node" points="340,75 340,85 330,80" fill="#50c878" style="animation-delay:0.4s"/>
+      <polygon class="pipe-node" points="505,75 505,85 495,80" fill="#d4a020" style="animation-delay:0.6s"/>
+      <polygon class="pipe-node" points="670,75 670,85 660,80" fill="#d4a020" style="animation-delay:0.8s"/>
+      <polygon class="pipe-node" points="835,75 835,85 825,80" fill="#50c878" style="animation-delay:1.0s"/>
+    </svg>
+  </div>
+
+  <div class="arch-paths reveal">
+    <div class="arch-path-card reveal-delay-1">
+      <div class="icon">&#127908;</div>
+      <h4>麦克风实时</h4>
+      <p>Web Speech API / 服务端 Whisper 流式</p>
+    </div>
+    <div class="arch-path-card reveal-delay-2">
+      <div class="icon">&#128196;</div>
+      <h4>文件上传</h4>
+      <p>SenseVoice / Whisper 整段识别</p>
+    </div>
+    <div class="arch-path-card reveal-delay-3">
+      <div class="icon">&#127916;</div>
+      <h4>标签页捕获</h4>
+      <p>getDisplayMedia 采集浏览器标签页音频</p>
+    </div>
+  </div>
+
+  <!-- Language Matrix -->
+  <h3 class="reveal" style="margin-top:48px; margin-bottom:16px; font-size:20px;">12 翻译方向 — 4 语言全互通</h3>
+  <div class="lang-matrix reveal">
+    <div class="cell header"></div>
+    <div class="cell header">→ 中文</div>
+    <div class="cell header">→ EN</div>
+    <div class="cell header">→ 日本語</div>
+    <div class="cell header">→ 한국어</div>
+
+    <div class="cell header">中文 →</div>
+    <div class="cell diag">—</div>
+    <div class="cell supported">&#10003;<span class="dir-label">zh2en</span></div>
+    <div class="cell supported">&#10003;<span class="dir-label">zh2ja</span></div>
+    <div class="cell supported">&#10003;<span class="dir-label">zh2ko</span></div>
+
+    <div class="cell header">EN →</div>
+    <div class="cell supported">&#10003;<span class="dir-label">en2zh</span></div>
+    <div class="cell diag">—</div>
+    <div class="cell supported">&#10003;<span class="dir-label">en2ja</span></div>
+    <div class="cell supported">&#10003;<span class="dir-label">en2ko</span></div>
+
+    <div class="cell header">日本語 →</div>
+    <div class="cell supported">&#10003;<span class="dir-label">ja2zh</span></div>
+    <div class="cell supported">&#10003;<span class="dir-label">ja2en</span></div>
+    <div class="cell diag">—</div>
+    <div class="cell supported">&#10003;<span class="dir-label">ja2ko</span></div>
+
+    <div class="cell header">한국어 →</div>
+    <div class="cell supported">&#10003;<span class="dir-label">ko2zh</span></div>
+    <div class="cell supported">&#10003;<span class="dir-label">ko2en</span></div>
+    <div class="cell supported">&#10003;<span class="dir-label">ko2ja</span></div>
+    <div class="cell diag">—</div>
+  </div>
+  <p class="reveal" style="color:var(--text-dim); font-size:13px; margin-top:12px;">每个方向都有独立的 System Prompt + Unicode 语言自动检测自动修正翻译方向</p>
+
+</section>
+
+<!-- ==================== 3. Algorithms ==================== -->
+<section id="algo">
+  <h2 class="section-title reveal">核心算法</h2>
+  <p class="section-subtitle reveal">从音频流到翻译输出的四个关键技术环节</p>
+
+  <div class="algo-grid">
+    <!-- VAD State Machine -->
+    <div class="algo-card reveal">
+      <h3>VAD 状态机</h3>
+      <div class="algo-desc">能量检测 + 双阈值端点切分，自动将连续音频流切成语句</div>
+      <div class="algo-params">
+        <div class="algo-param"><span class="lbl">采样率 </span><span class="val">16kHz</span></div>
+        <div class="algo-param"><span class="lbl">语音起始 </span><span class="val">0.15s</span></div>
+        <div class="algo-param"><span class="lbl">端点检测 </span><span class="val">0.6s</span><span class="lbl"> 实时 / </span><span class="val">1.0s</span><span class="lbl"> 文件</span></div>
+        <div class="algo-param"><span class="lbl">RMS 阈值 </span><span class="val">300</span></div>
+        <div class="algo-param"><span class="lbl">分块上限 </span><span class="val">1.5s</span><span class="lbl"> 实时 / </span><span class="val">2.5s</span><span class="lbl"> 文件</span></div>
+      </div>
+      <div class="visual">
+        <span class="gold">silence</span>
+        &nbsp;── speechSamples &ge; onset ──&gt;&nbsp;
+        <span class="accent">speech</span>
+        <br><br>
+        <span class="accent">speech</span>
+        &nbsp;── silenceSamples &ge; endpoint ──&gt;&nbsp;
+        <span class="gold">silence</span>
+      </div>
+      <pre><span class="cm">// server/asr.js:224-257 — VAD 状态机</span>
+<span class="kw">if</span> (<span class="kw">this</span>.<span class="prop">vadState</span> === <span class="str">'silence'</span>) {
+  <span class="kw">if</span> (isSpeech) {
+    <span class="kw">this</span>.<span class="prop">vadSpeechSamples</span> += samples;
+    <span class="kw">if</span> (<span class="kw">this</span>.<span class="prop">vadSpeechSamples</span> >= <span class="kw">this</span>.<span class="prop">vadSpeechOnset</span>) {
+      <span class="kw">this</span>.<span class="prop">vadState</span> = <span class="str">'speech'</span>;
+    }
+  }
+} <span class="kw">else</span> {  <span class="cm">// vadState === 'speech'</span>
+  <span class="kw">if</span> (!isSpeech) {
+    <span class="kw">this</span>.<span class="prop">vadSilenceSamples</span> += samples;
+    <span class="kw">if</span> (<span class="kw">this</span>.<span class="prop">vadSilenceSamples</span> >= <span class="kw">this</span>.<span class="prop">vadEndpointSamples</span>) {
+      <span class="kw">this</span>.<span class="prop">vadState</span> = <span class="str">'silence'</span>;
+      <span class="kw">this</span>.<span class="fn">_processChunk</span>();
+      <span class="kw">this</span>.<span class="fn">_flushAccumulated</span>();
+    }
+  }
+}</pre>
+    </div>
+
+    <!-- LocalAgreement-2 -->
+    <div class="algo-card reveal reveal-delay-1">
+      <h3>LocalAgreement-2 提交策略</h3>
+      <div class="algo-desc">连续两次 ASR 假设在前缀达成一致才定稿，平衡速度与稳定性。源自 whisper_streaming 的经典做法。</div>
+      <div class="algo-params">
+        <div class="algo-param"><span class="lbl">normalize: </span><span class="val">lowercase + 去标点</span></div>
+        <div class="algo-param"><span class="lbl">flush 触发: </span><span class="val">final 事件 / VAD 端点</span></div>
+      </div>
+      <div class="visual">
+        hypothesis<sub>t-1</sub>: <span class="gold">The quick brown</span> fox jumps<br>
+        hypothesis<sub>t</sub>&nbsp;&nbsp;: <span class="gold">The quick brown</span> fox runs<br>
+        <br>
+        <span class="accent">commit</span>: "The quick brown" &nbsp;|&nbsp; <span class="gold">pending</span>: "fox runs"
+      </div>
+      <pre><span class="cm">// server/commit.js:20-41 — LocalAgreement-2</span>
+<span class="fn">update</span>(words) {
+  <span class="kw">const</span> newlyCommitted = [];
+  <span class="kw">const</span> start = <span class="kw">this</span>.<span class="prop">committed</span>.length;
+  <span class="kw">let</span> i = start;
+  <span class="kw">while</span> (
+    i &lt; words.length &amp;&amp;
+    i &lt; <span class="kw">this</span>.<span class="prop">prevHypothesis</span>.length &amp;&amp;
+    <span class="fn">normalize</span>(words[i]) === <span class="fn">normalize</span>(<span class="kw">this</span>.<span class="prop">prevHypothesis</span>[i])
+  ) {
+    newlyCommitted.<span class="fn">push</span>(words[i]);
+    i++;
+  }
+  <span class="kw">this</span>.<span class="prop">committed</span>.<span class="fn">push</span>(...newlyCommitted);
+  <span class="kw">this</span>.<span class="prop">prevHypothesis</span> = words;
+  <span class="kw">return</span> { <span class="prop">committed</span>, <span class="prop">pending</span>, <span class="prop">newlyCommitted</span> };
+}</pre>
+    </div>
+
+    <!-- Streaming Translation -->
+    <div class="algo-card reveal reveal-delay-2">
+      <h3>流式翻译 + 自动纠正</h3>
+      <div class="algo-desc">滑动窗口上下文 + JSON 结构化输出，支持回溯纠正已发译文</div>
+      <div class="algo-params">
+        <div class="algo-param"><span class="lbl">上下文窗口 </span><span class="val">8 句</span></div>
+        <div class="algo-param"><span class="lbl">术语表上限 </span><span class="val">30 条</span><span class="lbl"> FIFO</span></div>
+        <div class="algo-param"><span class="lbl">用户反馈 </span><span class="val">3 条</span></div>
+        <div class="algo-param"><span class="lbl">流式提取 </span><span class="val">Regex 匹配不完整 JSON</span></div>
+      </div>
+      <div class="visual" style="text-align:left; font-size:12px;">
+        <span class="cm">// 8-sentence sliding context window</span><br>
+        context[0]: "Previous sentence..."<br>
+        context[1]: "Another sentence..."<br>
+        context[2]: "More context..."<br>
+        <span class="accent">current</span>: "New input to translate"
+      </div>
+      <pre><span class="cm">// 翻译 Prompt 要求 JSON 输出结构</span>
+{
+  <span class="prop">"target"</span>: <span class="str">"本句的中文翻译"</span>,
+  <span class="prop">"corrections"</span>: [
+    {<span class="prop">"id"</span>: <span class="num">句子编号</span>, <span class="prop">"target"</span>: <span class="str">"修正后的译文"</span>}
+  ],
+  <span class="prop">"terms"</span>: [
+    {<span class="prop">"src"</span>: <span class="str">"原文术语"</span>, <span class="prop">"tgt"</span>: <span class="str">"译文术语"</span>}
+  ]
+}</pre>
+    </div>
+
+    <!-- Voice Cloning -->
+    <div class="algo-card reveal reveal-delay-3">
+      <h3>声音克隆 TTS</h3>
+      <div class="algo-desc">零样本声音克隆：5 秒采样即可复刻说话人音色，用克隆音色播报译文</div>
+      <div class="algo-params">
+        <div class="algo-param"><span class="lbl">采样 </span><span class="val">5s</span><span class="lbl"> = 80000 samples @16kHz</span></div>
+        <div class="algo-param"><span class="lbl">模型 </span><span class="val">CosyVoice2-0.5B</span></div>
+        <div class="algo-param"><span class="lbl">分段 </span><span class="val">&le;50 字符</span><span class="lbl"> 只合成首段</span></div>
+        <div class="algo-param"><span class="lbl">输出 </span><span class="val">MP3</span></div>
+        <div class="algo-param"><span class="lbl">降级 </span><span class="val">预设音色 / speechSynthesis</span></div>
+      </div>
+      <div class="visual" style="text-align:left; font-size:12px; line-height:2.2;">
+        <strong>Step 1 — 浏览器端采集</strong><br>
+        &nbsp;&nbsp;麦克风前 5s PCM16 → <span class="accent">collectVoiceSample()</span> 累积到 80000 样本<br>
+        &nbsp;&nbsp;UI 显示「采集声纹 xx%」进度，TTS 播放期间暂停采集防止回声<br>
+        <strong>Step 2 — 发送到服务端</strong><br>
+        &nbsp;&nbsp;先发 JSON: <span class="gold">{ type: 'voice_sample', sampleRate: 16000, samples: 80000 }</span><br>
+        &nbsp;&nbsp;紧接着发 <span class="gold">二进制 ArrayBuffer</span>（160KB PCM16）<br>
+        &nbsp;&nbsp;服务端用 <span class="accent">pendingVoiceSample</span> 标志位区分声纹 vs 普通音频<br>
+        <strong>Step 3 — 服务端处理</strong><br>
+        &nbsp;&nbsp;PCM16 → <span class="accent">pcm16ToWav()</span> 手动拼 44 字节 WAV 头 → Base64 → data URI<br>
+        &nbsp;&nbsp;WAV → <span class="accent">transcribeWav()</span> 调 SenseVoice ASR 得到文本 transcript<br>
+        &nbsp;&nbsp;存入 <span class="accent">sessionVoiceRefs</span> Map（会话级，断开自动清理）<br>
+        <strong>Step 4 — 克隆合成</strong><br>
+        &nbsp;&nbsp;翻译完成 → <span class="accent">synthesize(text, sessionId)</span><br>
+        &nbsp;&nbsp;长文本按标点拆分（<span class="gold">/[。！？；，、.!?;,]/</span>），只合成第一段降低延迟<br>
+        &nbsp;&nbsp;有 voiceRef → <span class="accent">references</span> 数组克隆；无 → 预设音色 fallback<br>
+        <strong>Step 5 — 浏览器播放</strong><br>
+        &nbsp;&nbsp;服务端发 tts_audio JSON + MP3 二进制 → Blob → <span class="accent">new Audio()</span> 播放<br>
+        &nbsp;&nbsp;播放期间暂停 Web Speech API + 静音麦克风 PCM 防止回声循环
+      </div>
+      <pre><span class="cm">// server/tts.js — CosyVoice2 克隆 API 调用</span>
+{
+  <span class="prop">"model"</span>: <span class="str">"FunAudioLLM/CosyVoice2-0.5B"</span>,
+  <span class="prop">"input"</span>: <span class="str">"要合成的译文（首段 &le;50 字符）"</span>,
+  <span class="prop">"references"</span>: [{
+    <span class="prop">"audio"</span>: <span class="str">"data:audio/wav;base64,UklGR..."</span>,
+    <span class="prop">"text"</span>:  <span class="str">"ASR 转录的参考音频文本"</span>
+  }],
+  <span class="prop">"response_format"</span>: <span class="str">"mp3"</span>
+}
+<span class="cm">// 注意: voice 和 references 互斥</span>
+<span class="cm">// 克隆失败时自动降级为 synthesizeWithVoice(预设音色)</span></pre>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 3.5 Auto-Correction Pipeline ==================== -->
+<section id="correction">
+  <h2 class="section-title reveal">自动纠正机制</h2>
+  <p class="section-subtitle reveal">四层纠正管线 — 从语音识别到人工校对，层层保证译文质量</p>
+
+  <div class="correction-pipeline">
+    <!-- Layer 1: ASR -->
+    <div class="correction-layer reveal">
+      <span class="layer-badge l1">Layer 1 — ASR 级</span>
+      <h4>语音假设逐步稳定</h4>
+      <div class="layer-desc">
+        <p>Web Speech API 逐词输出 interim hypothesis，文字不断跳动修正。
+        <strong>LocalAgreement-2</strong> 算法：只有连续两次假设在前缀达成一致才定稿提交，其余留作灰色临时区。</p>
+        <div class="feat-flow" style="margin-top:12px;">
+          <span class="step">interim: "I think we should"</span>
+          <span class="arrow">→</span>
+          <span class="step">interim: "I think we should go"</span>
+          <span class="arrow">→</span>
+          <span class="step" style="border-color:var(--green);">commit: "I think we should"</span>
+        </div>
+        <p style="margin-top:8px;">服务端 ASR（SenseVoice/Whisper）同理：VAD 分块 → 整段识别 → 文字累积 → 句边界检测后 flush 定稿。</p>
+      </div>
+    </div>
+
+    <div class="correction-connector"></div>
+
+    <!-- Layer 2: LLM Translation Correction -->
+    <div class="correction-layer reveal reveal-delay-1">
+      <span class="layer-badge l2">Layer 2 — LLM 翻译回改</span>
+      <h4>上下文感知回溯修正</h4>
+      <div class="layer-desc">
+        <p><strong>8 句滑动窗口</strong>作为上下文注入 Prompt。LLM 翻译当前句的同时，输出 <strong>corrections[]</strong> 数组回溯修改之前已发布的译文。
+        典型场景：后文出现消歧信息后，LLM 自动修正前句的错误翻译。</p>
+        <pre><span class="cm">// LLM 输出 JSON 结构</span>
+{
+  <span class="prop">"target"</span>: <span class="str">"当前句的译文"</span>,
+  <span class="prop">"corrections"</span>: [
+    {<span class="prop">"id"</span>: <span class="val">3</span>, <span class="prop">"target"</span>: <span class="str">"修正后的第3句译文"</span>},
+    {<span class="prop">"id"</span>: <span class="val">5</span>, <span class="prop">"target"</span>: <span class="str">"修正后的第5句译文"</span>}
+  ],
+  <span class="prop">"terms"</span>: [{<span class="prop">"src"</span>: <span class="str">"术语"</span>, <span class="prop">"tgt"</span>: <span class="str">"翻译"</span>}]
+}</pre>
+        <p style="margin-top:8px;">系统遍历 corrections 数组 → 找到对应 id 的字幕行 → 原地替换译文 → 触发 Layer 3 视觉反馈。</p>
+      </div>
+    </div>
+
+    <div class="correction-connector"></div>
+
+    <!-- Layer 3: Visual Feedback -->
+    <div class="correction-layer reveal reveal-delay-2">
+      <span class="layer-badge l3">Layer 3 — 字幕三态显示</span>
+      <h4>视觉状态即时反馈</h4>
+      <div class="layer-desc">
+        <p>每行字幕都有明确的视觉状态，用户一眼就能分辨定稿、临时和修正内容：</p>
+        <div class="subtitle-states">
+          <span class="subtitle-state final">白色 = 已定稿</span>
+          <span class="subtitle-state partial">灰色 = 临时 (is-partial)</span>
+          <span class="subtitle-state corrected">黄色闪烁 = 已修正</span>
+        </div>
+        <p style="margin-top:10px;">修正动画：<code>flash-correct</code> CSS 关键帧 <strong>1.6s</strong>，黄色高亮 + 右上角"已修正"标签。动画结束后自动移除 class。</p>
+      </div>
+    </div>
+
+    <div class="correction-connector"></div>
+
+    <!-- Layer 4: Manual Edit -->
+    <div class="correction-layer reveal reveal-delay-3">
+      <span class="layer-badge l4">Layer 4 — 人工修正</span>
+      <h4>双击编辑 → 即时重译</h4>
+      <div class="layer-desc">
+        <p>用户<strong>双击</strong>任意原文字幕行，进入 <code>contentEditable</code> 编辑模式。修改完成后自动发送重译请求：</p>
+        <div class="feat-flow" style="margin-top:10px;">
+          <span class="step">双击编辑原文</span>
+          <span class="arrow">→</span>
+          <span class="step">ws.send({type:'retranslate', id, text})</span>
+          <span class="arrow">→</span>
+          <span class="step">服务端 LLM 重译</span>
+          <span class="arrow">→</span>
+          <span class="step">译文自动更新</span>
+        </div>
+        <p style="margin-top:8px;">修改后的原文同步更新翻译上下文窗口（history[]），影响后续句子的翻译质量和术语一致性。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 3.6 Latency Optimization ==================== -->
+<section id="latency">
+  <h2 class="section-title reveal">延迟优化</h2>
+  <p class="section-subtitle reveal">从音频输入到字幕显示的端到端延迟拆解与优化策略</p>
+
+  <div class="latency-wrap">
+    <div class="latency-track reveal" style="overflow-x:auto;">
+      <div style="min-width:700px;">
+        <div class="latency-row">
+          <div class="latency-label">VAD 起始检测</div>
+          <div class="latency-bar-area">
+            <div class="latency-bar green" style="left:0; width:5%;">0.15s</div>
+          </div>
+        </div>
+        <div class="latency-row">
+          <div class="latency-label">音频积累</div>
+          <div class="latency-bar-area">
+            <div class="latency-bar dim" style="left:5%; width:25%;">1.5s 分块 (实时)</div>
+          </div>
+        </div>
+        <div class="latency-row">
+          <div class="latency-label">VAD 端点检测</div>
+          <div class="latency-bar-area">
+            <div class="latency-bar gold" style="left:30%; width:10%;">0.6s 静音</div>
+          </div>
+        </div>
+        <div class="latency-row">
+          <div class="latency-label">ASR 识别</div>
+          <div class="latency-bar-area">
+            <div class="latency-bar green" style="left:30%; width:18%;">并行不阻塞</div>
+          </div>
+        </div>
+        <div class="latency-row">
+          <div class="latency-label">文字累积</div>
+          <div class="latency-bar-area">
+            <div class="latency-bar dim" style="left:38%; width:12%;">句边界 / 4s 兜底</div>
+          </div>
+        </div>
+        <div class="latency-row">
+          <div class="latency-label">流式翻译</div>
+          <div class="latency-bar-area">
+            <div class="latency-bar green" style="left:50%; width:22%;">~10 字即显示</div>
+          </div>
+        </div>
+        <div class="latency-row">
+          <div class="latency-label">TTS 合成</div>
+          <div class="latency-bar-area">
+            <div class="latency-bar gold" style="left:55%; width:15%;">首段 ≤50 字</div>
+          </div>
+        </div>
+        <div class="latency-axis">
+          <span>0s</span><span>1s</span><span>2s</span><span>3s</span><span>4s</span><span>5s</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="latency-mode-compare reveal">
+      <div class="latency-mode-card">
+        <h4 style="color:var(--green);">实时模式 (麦克风)</h4>
+        <div class="metric"><span>VAD 端点</span><span class="val">0.6s</span></div>
+        <div class="metric"><span>ASR 分块上限</span><span class="val">1.5s (24000 样本)</span></div>
+        <div class="metric"><span>最小 ASR 长度</span><span class="val">0.5s (8000 样本)</span></div>
+        <div class="metric"><span>并行 ASR</span><span class="val">pendingASR 计数器</span></div>
+        <div class="metric"><span>文字累积</span><span class="val">句边界检测 + 4s 兜底</span></div>
+        <div class="metric"><span>流式翻译首字</span><span class="val">Regex 提取 ~10 字符即显</span></div>
+        <div class="metric"><span>TTS 策略</span><span class="val">首段 ≤50 字符, 省 ~70%</span></div>
+      </div>
+      <div class="latency-mode-card">
+        <h4 style="color:var(--gold);">文件模式 (上传 / URL)</h4>
+        <div class="metric"><span>VAD 端点</span><span class="val">1.0s</span></div>
+        <div class="metric"><span>ASR 分块上限</span><span class="val">2.5s (40000 样本)</span></div>
+        <div class="metric"><span>最小 ASR 长度</span><span class="val">0.8s (12800 样本)</span></div>
+        <div class="metric"><span>文件分块发送</span><span class="val">0.5s 块 @ 100ms 间隔</span></div>
+        <div class="metric"><span>文字累积</span><span class="val">同上</span></div>
+        <div class="metric"><span>流式翻译首字</span><span class="val">同上</span></div>
+        <div class="metric"><span>TTS 策略</span><span class="val">同上</span></div>
+      </div>
+    </div>
+
+    <div class="algo-params reveal" style="margin-top:24px; justify-content:center;">
+      <div class="algo-param"><span class="lbl">关键优化: </span><span class="val">ASR 并行</span><span class="lbl"> — pendingASR 计数器, 管线不阻塞等待上一次识别</span></div>
+      <div class="algo-param"><span class="lbl">流式提取: </span><span class="val">Regex</span><span class="lbl"> 匹配不完整 JSON 的 "target" 字段, 边生成边显示</span></div>
+      <div class="algo-param"><span class="lbl">TTS 拆分: </span><span class="val">splitLongText()</span><span class="lbl"> 按标点拆段, 仅合成首段降低延迟</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 4. Tech Stack ==================== -->
+<section id="stack">
+  <h2 class="section-title reveal">技术栈</h2>
+  <p class="section-subtitle reveal">零前端框架依赖，纯 Vanilla JS + Node.js 服务端</p>
+
+  <div class="stack-grid">
+    <div class="stack-col reveal">
+      <h3>ASR 语音识别</h3>
+      <div class="stack-item">
+        <h4>Web Speech API</h4>
+        <p>浏览器原生，实时逐词，零延迟</p>
+      </div>
+      <div class="stack-item">
+        <h4>SenseVoice</h4>
+        <p>SiliconFlow 托管，50+ 语言</p>
+      </div>
+      <div class="stack-item">
+        <h4>Whisper</h4>
+        <p>OpenAI 兼容 API，流式分块</p>
+      </div>
+    </div>
+
+    <div class="stack-col reveal reveal-delay-1">
+      <h3>Translation 翻译</h3>
+      <div class="stack-item">
+        <h4>DeepSeek</h4>
+        <p>主力翻译引擎，流式 JSON</p>
+      </div>
+      <div class="stack-item">
+        <h4>OpenAI / GPT</h4>
+        <p>兼容 OpenAI 协议的任意 LLM</p>
+      </div>
+      <div class="stack-item">
+        <h4>Gemini / Claude</h4>
+        <p>通过 OpenRouter 等中转</p>
+      </div>
+    </div>
+
+    <div class="stack-col reveal reveal-delay-2">
+      <h3>TTS 语音合成</h3>
+      <div class="stack-item">
+        <h4>CosyVoice2</h4>
+        <p>SiliconFlow 托管，零样本克隆</p>
+      </div>
+      <div class="stack-item">
+        <h4>speechSynthesis</h4>
+        <p>浏览器原生 fallback</p>
+      </div>
+    </div>
+
+    <div class="stack-col reveal reveal-delay-3">
+      <h3>Infrastructure</h3>
+      <div class="stack-item">
+        <h4>Node.js + Express</h4>
+        <p>HTTP 服务 + 静态托管</p>
+      </div>
+      <div class="stack-item">
+        <h4>WebSocket (ws)</h4>
+        <p>双向二进制音频流</p>
+      </div>
+      <div class="stack-item">
+        <h4>Vanilla JS</h4>
+        <p>零框架，零构建工具</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="badge reveal">零前端依赖 — No React, No Vue, No Webpack</div>
+</section>
+
+<!-- ==================== 5. Tech Tradeoffs ==================== -->
+<section id="tradeoffs">
+  <h2 class="section-title reveal">技术选型</h2>
+  <p class="section-subtitle reveal">每个决策背后的权衡 — 为什么选它而不是别的</p>
+
+  <div class="tradeoff-grid">
+
+    <div class="tradeoff-card reveal">
+      <h4>前端框架</h4>
+      <div class="tradeoff-row">
+        <div class="tradeoff-chosen">Vanilla JS</div>
+        <div class="tradeoff-alt"><span>React</span><span>Vue</span><span>Svelte</span></div>
+      </div>
+      <div class="tradeoff-reason">零构建、零依赖、加载即用。同传场景核心是 WebSocket + AudioContext，不需要复杂组件状态管理。整个前端 1 个 HTML + 1 个 JS + 1 个 CSS。</div>
+    </div>
+
+    <div class="tradeoff-card reveal reveal-delay-1">
+      <h4>实时通信</h4>
+      <div class="tradeoff-row">
+        <div class="tradeoff-chosen">WebSocket (ws)</div>
+        <div class="tradeoff-alt"><span>Socket.IO</span><span>WebRTC</span><span>SSE</span></div>
+      </div>
+      <div class="tradeoff-reason">ws 原生支持二进制帧（PCM16 音频直传），无协议开销。Socket.IO 多了一层抽象和 HTTP 降级不需要；WebRTC 太重；SSE 只能单向。</div>
+    </div>
+
+    <div class="tradeoff-card reveal">
+      <h4>实时 ASR 路径</h4>
+      <div class="tradeoff-row">
+        <div class="tradeoff-chosen">Web Speech API</div>
+        <div class="tradeoff-alt"><span>全部走服务端 Whisper</span></div>
+      </div>
+      <div class="tradeoff-reason">浏览器原生 → 零网络延迟，逐词输出（interim results），搭配 LocalAgreement-2 做字幕稳定。服务端 ASR 有网络往返 + 攒够音频才能识别的延迟，作为文件/标签页模式的后备。</div>
+    </div>
+
+    <div class="tradeoff-card reveal reveal-delay-1">
+      <h4>翻译引擎</h4>
+      <div class="tradeoff-row">
+        <div class="tradeoff-chosen">LLM (DeepSeek)</div>
+        <div class="tradeoff-alt"><span>Google Translate API</span><span>专用 NMT</span></div>
+      </div>
+      <div class="tradeoff-reason">LLM 能理解上下文（8 句滑动窗口）、做术语一致性（自动术语表）、回溯纠正已发译文（corrections 机制），这些传统 NMT 做不到。流式输出搭配 Regex 提取实现边生成边显示。</div>
+    </div>
+
+    <div class="tradeoff-card reveal">
+      <h4>VAD 方案</h4>
+      <div class="tradeoff-row">
+        <div class="tradeoff-chosen">自实现能量 VAD</div>
+        <div class="tradeoff-alt"><span>Silero VAD</span><span>WebRTC VAD</span></div>
+      </div>
+      <div class="tradeoff-reason">30 行代码实现双阈值状态机，RMS 能量检测足够可靠。避免加载 ONNX runtime（Silero）或额外 WASM（WebRTC VAD）。参数可按场景调整：实时模式更灵敏（0.6s 端点），文件模式更宽松（1.0s）。</div>
+    </div>
+
+    <div class="tradeoff-card reveal reveal-delay-1">
+      <h4>字幕稳定策略</h4>
+      <div class="tradeoff-row">
+        <div class="tradeoff-chosen">LocalAgreement-2</div>
+        <div class="tradeoff-alt"><span>直接显示 interim</span><span>等 final</span></div>
+      </div>
+      <div class="tradeoff-reason">直接显示 interim 字幕疯狂跳动；等 final 太慢（一整句才出来）。LA-2 是 whisper_streaming 等流式同传系统的经典做法：只有连续两次假设在前缀一致才定稿，平衡实时性和稳定性。</div>
+    </div>
+
+    <div class="tradeoff-card reveal">
+      <h4>TTS 语音合成</h4>
+      <div class="tradeoff-row">
+        <div class="tradeoff-chosen">CosyVoice2</div>
+        <div class="tradeoff-alt"><span>Edge TTS</span><span>ElevenLabs</span><span>speechSynthesis</span></div>
+      </div>
+      <div class="tradeoff-reason">零样本声音克隆：5 秒采样即可复刻说话人音色。中/英/日/韩多语言支持、SiliconFlow 托管成本低。speechSynthesis 作为离线 fallback，无需 API key 即可使用。</div>
+    </div>
+
+    <div class="tradeoff-card reveal reveal-delay-1">
+      <h4>翻译输出格式</h4>
+      <div class="tradeoff-row">
+        <div class="tradeoff-chosen">结构化 JSON</div>
+        <div class="tradeoff-alt"><span>纯文本</span><span>XML</span></div>
+      </div>
+      <div class="tradeoff-reason">JSON 结构让 corrections / terms 可解析：target 是译文，corrections 数组回溯纠正之前的句子，terms 数组自动提取术语对照。流式场景下用 Regex 实时匹配不完整 JSON 的 "target" 字段。</div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ==================== 5.5 Multi-Provider Architecture ==================== -->
+<section id="providers">
+  <h2 class="section-title reveal">多 Provider 架构</h2>
+  <p class="section-subtitle reveal">统一抽象层，支持多提供商一键切换 + 自动降级，均使用 OpenAI 兼容 API 格式</p>
+
+  <div class="provider-grid">
+    <!-- LLM Column -->
+    <div class="provider-col reveal">
+      <h3>LLM 翻译 <span style="color:var(--text-dim); font-size:13px; font-weight:400;">(5+1 提供商)</span></h3>
+      <div class="provider-item">
+        <span class="p-name">DeepSeek</span>
+        <span class="p-model">deepseek-chat</span>
+        <span class="p-tag default">默认</span>
+      </div>
+      <div class="provider-item">
+        <span class="p-name">通义千问</span>
+        <span class="p-model">qwen-plus</span>
+      </div>
+      <div class="provider-item">
+        <span class="p-name">Kimi</span>
+        <span class="p-model">moonshot-v1-8k</span>
+      </div>
+      <div class="provider-item">
+        <span class="p-name">OpenAI</span>
+        <span class="p-model">gpt-4o-mini</span>
+      </div>
+      <div class="provider-item">
+        <span class="p-name">智谱</span>
+        <span class="p-model">glm-4-flash</span>
+      </div>
+      <div class="provider-arrow">↓ 或自定义 ↓</div>
+      <div class="provider-item">
+        <span class="p-name">Custom</span>
+        <span class="p-model">任意 OpenAI 兼容 API</span>
+        <span class="p-tag fallback">自定义</span>
+      </div>
+      <div class="provider-env">MT_PROVIDER=deepseek<br>LLM_API_KEY=sk-...<br>LLM_BASE_URL=https://...</div>
+    </div>
+
+    <!-- ASR Column -->
+    <div class="provider-col reveal reveal-delay-1">
+      <h3>ASR 语音识别 <span style="color:var(--text-dim); font-size:13px; font-weight:400;">(3 + 浏览器)</span></h3>
+      <div class="provider-item">
+        <span class="p-name">SiliconFlow</span>
+        <span class="p-model">SenseVoice</span>
+        <span class="p-tag default">默认</span>
+      </div>
+      <div class="provider-item">
+        <span class="p-name">Groq</span>
+        <span class="p-model">whisper-large-v3</span>
+      </div>
+      <div class="provider-item">
+        <span class="p-name">OpenAI</span>
+        <span class="p-model">whisper-1</span>
+      </div>
+      <div class="provider-arrow">↓ fallback ↓</div>
+      <div class="provider-item">
+        <span class="p-name">浏览器</span>
+        <span class="p-model">Web Speech API</span>
+        <span class="p-tag fallback">降级</span>
+      </div>
+      <div class="provider-env">ASR_PROVIDER=siliconflow<br>ASR_API_KEY=sk-...<br>ASR_BASE_URL=https://...</div>
+    </div>
+
+    <!-- TTS Column -->
+    <div class="provider-col reveal reveal-delay-2">
+      <h3>TTS 语音合成 <span style="color:var(--text-dim); font-size:13px; font-weight:400;">(2 + 浏览器)</span></h3>
+      <div class="provider-item">
+        <span class="p-name">SiliconFlow</span>
+        <span class="p-model">CosyVoice2-0.5B</span>
+        <span class="p-tag default">默认</span>
+      </div>
+      <div class="provider-item" style="padding-left:100px; font-size:12px; color:var(--text-dim);">
+        支持零样本声音克隆 (references[])
+      </div>
+      <div class="provider-item">
+        <span class="p-name">OpenAI</span>
+        <span class="p-model">tts-1</span>
+      </div>
+      <div class="provider-arrow">↓ fallback ↓</div>
+      <div class="provider-item">
+        <span class="p-name">浏览器</span>
+        <span class="p-model">speechSynthesis</span>
+        <span class="p-tag fallback">降级</span>
+      </div>
+      <div class="provider-env">TTS_PROVIDER=siliconflow<br>TTS_API_KEY=sk-...<br>TTS_BASE_URL=https://...</div>
+    </div>
+  </div>
+
+  <div class="badge reveal" style="margin-top:32px;">全部使用 OpenAI 兼容 API 格式 — 每个服务只需 3 个环境变量即可切换</div>
+</section>
+
+<!-- ==================== 6. Features ==================== -->
+<section id="features" style="min-height:auto;">
+  <h2 class="section-title reveal">5 种输入模式</h2>
+  <p class="section-subtitle reveal">每种模式的完整数据流路径和实现细节</p>
+
+  <!-- Mode 1: Microphone -->
+  <div class="feat-detail reveal">
+    <div class="feat-header">
+      <div class="icon">&#127908;</div>
+      <h3>模式一：麦克风实时</h3>
+      <span class="feat-badge">最低延迟</span>
+    </div>
+    <div class="feat-body">
+      <div class="feat-flow">
+        <span class="step">getUserMedia()</span>
+        <span class="arrow">→</span>
+        <span class="step">AudioContext</span>
+        <span class="arrow">→</span>
+        <span class="step">ScriptProcessor (4096)</span>
+        <span class="arrow">→</span>
+        <span class="step">降采样 → PCM16@16kHz</span>
+        <span class="arrow">→</span>
+        <span class="step">WebSocket 二进制帧</span>
+      </div>
+      <p>
+        <strong>音频采集：</strong>浏览器 getUserMedia 获取麦克风，开启 echoCancellation + noiseSuppression + autoGainControl。
+        ScriptProcessor 每 4096 样本触发一次回调，从浏览器原生采样率（通常 44.1kHz/48kHz）降采样为 <strong>16kHz PCM16</strong>。
+      </p>
+      <p style="margin-top:8px;">
+        <strong>双路 ASR：</strong>浏览器端同时启动 <strong>Web Speech API</strong>（逐词 interim results → LocalAgreement-2 稳定字幕），
+        音频二进制帧同时发往服务端 <strong>SenseVoice/Whisper</strong>（VAD 分块 → 整段识别）。两路结果互补。
+      </p>
+      <p style="margin-top:8px;">
+        <strong>声音克隆采样：</strong>前 <strong>5 秒</strong>音频（80000 samples）自动收集，发送给服务端做 ASR 转录 + CosyVoice2 声纹注册。
+        TTS 播放期间暂停采集，防止回声被录入。
+      </p>
+    </div>
+  </div>
+
+  <!-- Mode 2: File Upload -->
+  <div class="feat-detail reveal">
+    <div class="feat-header">
+      <div class="icon">&#128196;</div>
+      <h3>模式二：文件上传</h3>
+      <span class="feat-badge">音频 / 视频</span>
+    </div>
+    <div class="feat-body">
+      <div class="feat-flow">
+        <span class="step">File → POST /upload</span>
+        <span class="arrow">→</span>
+        <span class="step">FFmpeg 转码 PCM16</span>
+        <span class="arrow">→</span>
+        <span class="step">返回 ArrayBuffer</span>
+        <span class="arrow">→</span>
+        <span class="step">0.5s 分块发送</span>
+        <span class="arrow">→</span>
+        <span class="step">服务端 ASR</span>
+      </div>
+      <p>
+        <strong>服务端转码：</strong>文件通过 HTTP POST 上传到 <code>/upload</code> 端点，服务端用 <strong>FFmpeg</strong> 转为 16kHz 单声道 PCM16 并返回整段 ArrayBuffer。
+      </p>
+      <p style="margin-top:8px;">
+        <strong>模拟实时流：</strong>客户端将 PCM 切成 <strong>8000 samples（0.5 秒）</strong>的块，每隔 <strong>100ms</strong> 发送一块到 WebSocket。
+        服务端 StreamingASR 按照与实时模式相同的 VAD 逻辑处理（但端点检测更宽松：1.0s）。进度条实时更新百分比。
+      </p>
+      <p style="margin-top:8px;">
+        <strong>视频同步：</strong>如果上传的是视频文件，自动创建 <code>&lt;video&gt;</code> 预览，ASR 的每句结果记录时间戳。
+        播放视频时通过 <code>ontimeupdate</code> 高亮当前时间对应的字幕行，其余行淡出。翻译完成后可一键导出 SRT。
+      </p>
+      <p style="margin-top:8px;">
+        <strong>声纹提取：</strong>自动截取文件前 5 秒 PCM 作为声音克隆参考，与分块音频分开发送（先发 voice_sample 消息头 + 二进制数据）。
+      </p>
+    </div>
+  </div>
+
+  <!-- Mode 3: Tab Audio -->
+  <div class="feat-detail reveal">
+    <div class="feat-header">
+      <div class="icon">&#127916;</div>
+      <h3>模式三：标签页音频捕获</h3>
+      <span class="feat-badge">画中画字幕</span>
+    </div>
+    <div class="feat-body">
+      <div class="feat-flow">
+        <span class="step">getDisplayMedia()</span>
+        <span class="arrow">→</span>
+        <span class="step">提取 audioTrack</span>
+        <span class="arrow">→</span>
+        <span class="step">停掉 videoTrack</span>
+        <span class="arrow">→</span>
+        <span class="step">ScriptProcessor (4096)</span>
+        <span class="arrow">→</span>
+        <span class="step">降采样 → WS</span>
+      </div>
+      <p>
+        <strong>屏幕共享 API：</strong>调用 <code>getDisplayMedia({ video: true, audio: true })</code>，用户选择标签页并<strong>勾选「分享音频」</strong>。
+        获取 MediaStream 后立即 <strong>停止视频轨道</strong>（只要音频），节省资源。监听音频轨道的 <code>ended</code> 事件，用户从浏览器 UI 停止共享时自动清理。
+      </p>
+      <p style="margin-top:8px;">
+        <strong>画中画悬浮窗：</strong>在 getDisplayMedia 之前（需要 user gesture）调用 <strong>Document Picture-in-Picture API</strong>
+        创建 500x180 悬浮窗口，注入自定义 CSS + DOM。窗口始终置顶，显示原文 + 译文两行字幕，实时更新。
+        不支持 Document PiP 的浏览器降级为 <code>window.open</code> 弹窗。
+      </p>
+      <p style="margin-top:8px;">
+        <strong>音频处理：</strong>与麦克风模式共用同一套 AudioContext → ScriptProcessor → 降采样 → WebSocket 管线。
+        区别是不启动浏览器 Web Speech API（标签页音频无法用浏览器 ASR），全部依赖服务端 ASR。
+      </p>
+    </div>
+  </div>
+
+  <!-- Mode 4: Online Video URL -->
+  <div class="feat-detail reveal">
+    <div class="feat-header">
+      <div class="icon">&#127760;</div>
+      <h3>模式四：在线视频 URL</h3>
+      <span class="feat-badge">YouTube / 直播</span>
+    </div>
+    <div class="feat-body">
+      <div class="feat-flow">
+        <span class="step">URL → WebSocket</span>
+        <span class="arrow">→</span>
+        <span class="step">yt-dlp -f bestaudio</span>
+        <span class="arrow">→</span>
+        <span class="step">stdout | pipe</span>
+        <span class="arrow">→</span>
+        <span class="step">FFmpeg → PCM16@16kHz</span>
+        <span class="arrow">→</span>
+        <span class="step">服务端 ASR</span>
+      </div>
+      <p>
+        <strong>全服务端处理：</strong>客户端只发送一个 <code>start_url</code> JSON 消息，所有重活在服务端完成。
+      </p>
+      <p style="margin-top:8px;">
+        <strong>管道架构：</strong>服务端 spawn 两个子进程：<strong>yt-dlp</strong> 用 <code>-f bestaudio -o -</code> 提取最佳音频流输出到 stdout；
+        <strong>FFmpeg</strong> 从 <code>pipe:0</code> 读取，转码为 <code>pcm_s16le -ar 16000 -ac 1</code> 输出到 <code>pipe:1</code>。
+        两个进程通过 <code>ytdlp.stdout.pipe(ff.stdin)</code> 串联，实现<strong>流式处理</strong>——不需要先下载完整文件。
+      </p>
+      <p style="margin-top:8px;">
+        <strong>实时识别：</strong>FFmpeg 的 stdout 产出 PCM 流，直接喂入 StreamingASR 的 <code>feedChunk()</code>，
+        与麦克风/文件模式共用同一套 VAD + ASR + 翻译管线。支持 YouTube、Bilibili 等 yt-dlp 支持的 1000+ 站点。
+      </p>
+    </div>
+  </div>
+
+  <!-- Mode 5: OBS Overlay -->
+  <div class="feat-detail reveal">
+    <div class="feat-header">
+      <div class="icon">&#128250;</div>
+      <h3>模式五：OBS 字幕叠加</h3>
+      <span class="feat-badge">直播场景</span>
+    </div>
+    <div class="feat-body">
+      <div class="feat-flow">
+        <span class="step">overlay.html?mode=both&amp;dir=en2zh</span>
+        <span class="arrow">→</span>
+        <span class="step">WebSocket (只读)</span>
+        <span class="arrow">→</span>
+        <span class="step">接收 asr_final / translation</span>
+        <span class="arrow">→</span>
+        <span class="step">渲染字幕 DOM</span>
+      </div>
+      <p>
+        <strong>独立页面：</strong>OBS 叠加使用独立的 <code>overlay.html</code>，背景完全透明（<code>background: transparent</code>），
+        字幕居下居中显示，带 text-shadow 增加可读性。原文 24px 半透明 + 译文 32px 粗体，淡入动画。
+      </p>
+      <p style="margin-top:8px;">
+        <strong>只读客户端：</strong>overlay 连接同一个 WebSocket 服务端，发送 <code>mode: 'overlay'</code> 标记自己是只读客户端。
+        服务端<strong>不为 overlay 创建 ASR 实例</strong>，只广播其他活跃会话产生的识别和翻译结果。
+      </p>
+      <p style="margin-top:8px;">
+        <strong>使用方式：</strong>主应用界面一键复制 OBS 浏览器源 URL（含翻译方向参数）。在 OBS 中添加「浏览器源」，粘贴 URL，
+        设置宽高后即可叠加到直播画面。支持 <code>mode=source</code>（仅原文）/ <code>target</code>（仅译文）/ <code>both</code>（双语）三种显示模式。
+      </p>
+    </div>
+  </div>
+
+  <!-- Extra features -->
+  <h3 class="reveal" style="text-align:center; margin-bottom:20px; font-size:20px; margin-top:20px;">附加功能</h3>
+  <div class="feat-extras reveal" style="max-width:1100px;">
+    <span class="feat-tag"><strong>说话人分离</strong> — 静音 &ge;2s 自动切换 Speaker 0/1，CSS 颜色区分</span>
+    <span class="feat-tag"><strong>语言自动检测</strong> — Unicode 码点统计（CJK/假名/韩文/Latin），自动修正翻译方向</span>
+    <span class="feat-tag"><strong>术语记忆</strong> — LLM 每次翻译提取 terms[]，最多保留 30 条，注入后续 Prompt</span>
+    <span class="feat-tag"><strong>SRT 导出</strong> — 支持原文/译文/双语三种格式，文件模式含实际时间戳</span>
+    <span class="feat-tag"><strong>实时纠正</strong> — LLM 输出 corrections[] 回溯修改之前句子的译文</span>
+    <span class="feat-tag"><strong>可编辑字幕</strong> — 双击字幕行可直接修改，修改结果反馈给翻译上下文</span>
+  </div>
+</section>
+
+<!-- ==================== 6.5 Project Structure ==================== -->
+<section id="structure" style="min-height:auto;">
+  <h2 class="section-title reveal">项目结构</h2>
+  <p class="section-subtitle reveal">极简文件组织 — 10 个核心文件，3 行配置即可运行</p>
+
+  <div class="structure-wrap reveal">
+    <div class="file-tree">
+      <div><span style="color:#555;">├──</span> <span class="t-dir">server/</span></div>
+      <div><span style="color:#555;">│   ├──</span> <span class="t-file">server.js</span> <span class="t-cm"># HTTP + WebSocket + FFmpeg 转码 + yt-dlp 管道</span></div>
+      <div><span style="color:#555;">│   ├──</span> <span class="t-file">asr.js</span> <span class="t-cm"># 流式 ASR + VAD 状态机 + 说话人分离</span></div>
+      <div><span style="color:#555;">│   ├──</span> <span class="t-file">providers.js</span> <span class="t-cm"># LLM 翻译 + 滑动窗口 + 12 方向 Prompt</span></div>
+      <div><span style="color:#555;">│   ├──</span> <span class="t-file">tts.js</span> <span class="t-cm"># TTS 合成 + 声音克隆 + PCM→WAV</span></div>
+      <div><span style="color:#555;">│   └──</span> <span class="t-file">commit.js</span> <span class="t-cm"># LocalAgreement-2 提交策略</span></div>
+      <div><span style="color:#555;">├──</span> <span class="t-dir">web/</span></div>
+      <div><span style="color:#555;">│   ├──</span> <span class="t-file">index.html</span> <span class="t-cm"># 主页面结构</span></div>
+      <div><span style="color:#555;">│   ├──</span> <span class="t-file">app.js</span> <span class="t-cm"># 前端逻辑 (~1200 行)</span></div>
+      <div><span style="color:#555;">│   ├──</span> <span class="t-file">style.css</span> <span class="t-cm"># 黑白主题样式</span></div>
+      <div><span style="color:#555;">│   ├──</span> <span class="t-file">overlay.html</span> <span class="t-cm"># OBS 字幕叠加层 (透明背景)</span></div>
+      <div><span style="color:#555;">│   └──</span> <span class="t-file">demo.html</span> <span class="t-cm"># 本技术演示页</span></div>
+      <div><span style="color:#555;">└──</span> <span class="t-file">.env</span> <span class="t-cm"># 3 行配置即可运行</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 6. Stats ==================== -->
+<section id="stats">
+  <h2 class="section-title reveal">关键数据</h2>
+  <p class="section-subtitle reveal"></p>
+
+  <div class="counter-row reveal">
+    <div class="counter">
+      <div class="num" data-target="12">0</div>
+      <div class="label">翻译方向</div>
+    </div>
+    <div class="counter">
+      <div class="num" data-target="5">0</div>
+      <div class="label">输入模式</div>
+    </div>
+    <div class="counter">
+      <div class="num" data-target="6">0</div>
+      <div class="label">LLM 提供商</div>
+    </div>
+    <div class="counter">
+      <div class="num" data-target="3">0</div>
+      <div class="label">ASR 引擎</div>
+    </div>
+    <div class="counter">
+      <div class="num" data-target="8">0</div>
+      <div class="label">句上下文窗口</div>
+    </div>
+    <div class="counter">
+      <div class="num" data-target="0" data-suffix="." data-decimals="6" style="color: var(--gold);">0</div>
+      <div class="label">秒端点延迟 (实时)</div>
+    </div>
+    <div class="counter">
+      <div class="num" data-target="5">0</div>
+      <div class="label">秒声音采样</div>
+    </div>
+    <div class="counter">
+      <div class="num" data-target="0" style="color: var(--gold);">0</div>
+      <div class="label">前端依赖</div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 7. CTA ==================== -->
+<section id="cta">
+  <h2 class="section-title reveal">试一试</h2>
+  <p class="section-subtitle reveal">启动服务后，点击按钮进入 Live Demo</p>
+  <a class="cta-btn reveal" href="/" id="demo-link">打开 Live Demo</a>
+  <div class="cta-links reveal">
+    <a href="https://github.com/kakiuwang-ui/Simultaneous-Interpretation" target="_blank">GitHub</a>
+    <a href="https://www.bilibili.com/video/BV1MEEt6zEKa/?vd_source=4dedea1db20af9b788febfb457df5625" target="_blank">Bilibili 演示视频</a>
+  </div>
+</section>
+
+<!-- ==================== JavaScript ==================== -->
+<script>
+const DEMO_URL = '/';
+
+document.getElementById('demo-link').href = DEMO_URL;
+
+// ---- Typewriter ----
+const phrases = [
+  '实时语音识别 → 流式翻译 → 语音合成',
+  'Real-time ASR → Streaming Translation → TTS',
+  '12 翻译方向 · 5 输入模式 · 零前端依赖',
+];
+let phraseIdx = 0, charIdx = 0, deleting = false;
+const tw = document.getElementById('typewriter');
+function typewrite() {
+  const phrase = phrases[phraseIdx];
+  if (!deleting) {
+    tw.textContent = phrase.slice(0, ++charIdx);
+    if (charIdx === phrase.length) { setTimeout(() => { deleting = true; typewrite(); }, 2000); return; }
+  } else {
+    tw.textContent = phrase.slice(0, --charIdx);
+    if (charIdx === 0) { deleting = false; phraseIdx = (phraseIdx + 1) % phrases.length; }
+  }
+  setTimeout(typewrite, deleting ? 30 : 60);
+}
+typewrite();
+
+// ---- Hero wave animation ----
+(function initWave() {
+  const g = document.getElementById('wave-group');
+  for (let j = 0; j < 3; j++) {
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('fill', 'none');
+    path.setAttribute('stroke', j === 0 ? '#50c878' : j === 1 ? '#d4a020' : '#888');
+    path.setAttribute('stroke-width', '1.5');
+    path.dataset.offset = j * 40;
+    path.dataset.speed = 0.02 + j * 0.005;
+    g.appendChild(path);
+  }
+  let t = 0;
+  function animateWave() {
+    t++;
+    g.querySelectorAll('path').forEach(p => {
+      const off = +p.dataset.offset;
+      const spd = +p.dataset.speed;
+      let d = 'M0 60';
+      for (let x = 0; x <= 1440; x += 20) {
+        const y = 60 + Math.sin((x + off) * 0.01 + t * spd) * 20 + Math.sin((x + off) * 0.025 + t * spd * 1.5) * 10;
+        d += ` L${x} ${y.toFixed(1)}`;
+      }
+      p.setAttribute('d', d);
+    });
+    requestAnimationFrame(animateWave);
+  }
+  animateWave();
+})();
+
+// ---- Intersection Observer (reveal + nav active) ----
+const sections = document.querySelectorAll('section');
+const navLinks = document.querySelectorAll('nav a');
+
+const revealObserver = new IntersectionObserver((entries) => {
+  entries.forEach(e => {
+    if (e.isIntersecting) e.target.classList.add('visible');
+  });
+}, { threshold: 0.15 });
+document.querySelectorAll('.reveal').forEach(el => revealObserver.observe(el));
+
+const navObserver = new IntersectionObserver((entries) => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      navLinks.forEach(a => a.classList.toggle('active', a.getAttribute('href') === '#' + e.target.id));
+    }
+  });
+}, { threshold: 0.3 });
+sections.forEach(s => navObserver.observe(s));
+
+// ---- Counter animation ----
+let counterDone = false;
+const statsObserver = new IntersectionObserver((entries) => {
+  entries.forEach(e => {
+    if (e.isIntersecting && !counterDone) {
+      counterDone = true;
+      document.querySelectorAll('.counter .num').forEach(el => {
+        const target = +el.dataset.target;
+        const suffix = el.dataset.suffix || '';
+        const decimals = +(el.dataset.decimals || 0);
+        if (target === 0 && !decimals) return;
+        if (decimals) {
+          // Special: animate to 0.6
+          const finalVal = decimals / 10;
+          let current = 0;
+          const interval = setInterval(() => {
+            current += 0.1;
+            if (current >= finalVal) { current = finalVal; clearInterval(interval); }
+            el.textContent = current.toFixed(1);
+          }, 120);
+          return;
+        }
+        let current = 0;
+        const step = Math.max(1, Math.floor(target / 30));
+        const interval = setInterval(() => {
+          current += step;
+          if (current >= target) { current = target; clearInterval(interval); }
+          el.textContent = current;
+        }, 40);
+      });
+    }
+  });
+}, { threshold: 0.5 });
+statsObserver.observe(document.getElementById('stats'));
+</script>
+</body>
+</html>

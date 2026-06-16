@@ -3,7 +3,7 @@
 // 支持 SiliconFlow CosyVoice2 + OpenAI TTS
 //
 // 环境变量:
-//   TTS_BASE_URL=https://api.siliconflow.cn/v1   (默认 SiliconFlow)
+//   TTS_BASE_URL=https://api.siliconflow.cn/v1  (默认 SiliconFlow)
 //   TTS_API_KEY=xxx  (不设则用浏览器自带 TTS)
 //   TTS_MODEL=FunAudioLLM/CosyVoice2-0.5B       (默认)
 //   TTS_VOICE=FunAudioLLM/CosyVoice2-0.5B:anna  (默认预设音色)
