@@ -936,6 +936,26 @@
   <h2 class="section-title reveal">自动纠正机制</h2>
   <p class="section-subtitle reveal">四层纠正管线 — 从语音识别到人工校对，层层保证译文质量</p>
 
+  <!-- Live correction demo -->
+  <div class="correction-demo reveal" id="correctionDemo">
+    <div class="correction-demo-header">
+      <span style="color:var(--text-dim); font-size:13px;">实时纠正演示 — 自动播放</span>
+      <button id="correctionReplayBtn" class="spectrum-btn" style="font-size:12px; padding:4px 12px;">重播</button>
+    </div>
+    <div class="correction-demo-panel">
+      <div class="correction-demo-col">
+        <div class="correction-demo-title">原文 Source</div>
+        <div id="cdSrc"></div>
+      </div>
+      <div class="correction-demo-divider"></div>
+      <div class="correction-demo-col">
+        <div class="correction-demo-title">译文 Target</div>
+        <div id="cdTgt"></div>
+      </div>
+    </div>
+    <div id="cdLog" class="correction-demo-log"></div>
+  </div>
+
   <div class="correction-pipeline">
     <!-- Layer 1: ASR -->
     <div class="correction-layer reveal">
@@ -1684,6 +1704,105 @@ document.querySelectorAll('.tradeoff-card').forEach(card => {
       hint.textContent = '无法访问麦克风: ' + e.message;
     }
   });
+})();
+
+// ---- Correction Demo ----
+(function initCorrectionDemo() {
+  const srcEl = document.getElementById('cdSrc');
+  const tgtEl = document.getElementById('cdTgt');
+  const logEl = document.getElementById('cdLog');
+  const replayBtn = document.getElementById('correctionReplayBtn');
+  if (!srcEl || !tgtEl) return;
+
+  // Demo script: [delay, action]
+  const script = [
+    // Sentence 1: normal
+    [0,    () => addLine(srcEl, 's1', 'I think we should', 'partial')],
+    [600,  () => addLine(srcEl, 's1', 'I think we should consider', 'partial')],
+    [400,  () => addLine(srcEl, 's1', 'I think we should consider this.', 'final')],
+    [200,  () => log('ASR final → 触发翻译', 'cd-green')],
+    [800,  () => addLine(tgtEl, 't1', '我认为我们应该考虑这个。', 'final')],
+    [200,  () => log('translation #1 完成', 'cd-green')],
+
+    // Sentence 2: "I went to the bank"
+    [700,  () => addLine(srcEl, 's2', 'I went to the bank', 'partial')],
+    [500,  () => addLine(srcEl, 's2', 'I went to the bank yesterday.', 'final')],
+    [200,  () => log('ASR final → 触发翻译', 'cd-green')],
+    [900,  () => addLine(tgtEl, 't2', '我昨天去了银行。', 'final')],
+    [200,  () => log('translation #2: "银行"', 'cd-green')],
+
+    // Sentence 3: disambiguates "bank" → river bank
+    [700,  () => addLine(srcEl, 's3', 'The water was', 'partial')],
+    [500,  () => addLine(srcEl, 's3', 'The water was really clear.', 'final')],
+    [200,  () => log('ASR final → 触发翻译（含 8 句上下文窗口）', 'cd-green')],
+    [1000, () => addLine(tgtEl, 't3', '水非常清澈。', 'final')],
+    [300,  () => log('LLM 发现上下文矛盾: bank + water + clear → 河岸', 'cd-red')],
+    [400,  () => log('corrections: [{id:2, target:"我昨天去了河岸。"}]', 'cd-gold')],
+    [300,  () => correctLine(tgtEl, 't2', '我昨天去了河岸。')],
+    [200,  () => log('→ 句 #2 译文原地替换 + 黄色闪烁 ✓', 'cd-gold')],
+    [200,  () => log('terms: [{src:"bank", tgt:"河岸"}] → 加入术语表', 'cd-gold')],
+
+    // Sentence 4: uses corrected term
+    [800,  () => addLine(srcEl, 's4', 'We sat on the bank and fished.', 'final')],
+    [200,  () => log('ASR final → 触发翻译（术语表含 bank→河岸）', 'cd-green')],
+    [900,  () => addLine(tgtEl, 't4', '我们坐在河岸上钓鱼。', 'final')],
+    [200,  () => log('translation #4: 术语一致 "河岸" ✓', 'cd-green')],
+  ];
+
+  let timers = [];
+
+  function addLine(container, id, text, cls) {
+    let el = container.querySelector(`[data-id="${id}"]`);
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'correction-demo-line';
+      el.dataset.id = id;
+      container.appendChild(el);
+      requestAnimationFrame(() => el.classList.add('show'));
+    }
+    el.className = 'correction-demo-line show ' + cls;
+    el.textContent = text;
+  }
+
+  function correctLine(container, id, newText) {
+    const el = container.querySelector(`[data-id="${id}"]`);
+    if (!el) return;
+    el.textContent = newText;
+    el.className = 'correction-demo-line show final corrected';
+  }
+
+  function log(msg, cls) {
+    const s = document.createElement('span');
+    s.className = cls || '';
+    s.textContent = msg;
+    logEl.appendChild(s);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function run() {
+    // clear
+    timers.forEach(t => clearTimeout(t));
+    timers = [];
+    srcEl.innerHTML = '';
+    tgtEl.innerHTML = '';
+    logEl.innerHTML = '';
+
+    let cumulative = 0;
+    script.forEach(([delay, fn]) => {
+      cumulative += delay;
+      timers.push(setTimeout(fn, cumulative));
+    });
+    // auto-replay after pause
+    timers.push(setTimeout(run, cumulative + 4000));
+  }
+
+  // Start when section is visible
+  const obs = new IntersectionObserver((entries) => {
+    if (entries[0].isIntersecting) { obs.disconnect(); run(); }
+  }, { threshold: 0.3 });
+  obs.observe(document.getElementById('correctionDemo'));
+
+  replayBtn.addEventListener('click', run);
 })();
 </script>
 </body>

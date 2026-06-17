@@ -286,6 +286,53 @@ section {
 .tradeoff-reject-detail .reject-label.good { background: var(--green-dim); color: var(--green); }
 .tradeoff-reject-detail .reject-text { color: var(--text-dim); }
 
+/* ==================== Correction Demo ==================== */
+.correction-demo {
+  max-width: 900px; width: 100%; margin-bottom: 40px;
+  background: var(--bg-card); border: 1px solid #222; border-radius: 14px;
+  padding: 20px 24px; overflow: hidden;
+}
+.correction-demo-header {
+  display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;
+}
+.correction-demo-panel {
+  display: grid; grid-template-columns: 1fr 1px 1fr; gap: 0; min-height: 160px;
+}
+.correction-demo-divider { background: #333; }
+.correction-demo-col { padding: 0 14px; }
+.correction-demo-title {
+  font-size: 11px; color: #555; text-transform: uppercase; letter-spacing: 1px;
+  margin-bottom: 10px; font-weight: 700;
+}
+.correction-demo-line {
+  font-size: 14px; line-height: 1.8; padding: 4px 8px; border-radius: 4px;
+  border-left: 2px solid transparent; transition: all 0.3s;
+  opacity: 0; transform: translateY(6px);
+}
+.correction-demo-line.show {
+  opacity: 1; transform: translateY(0);
+}
+.correction-demo-line.partial { color: #666; }
+.correction-demo-line.final { color: #e8e8e8; }
+.correction-demo-line.corrected {
+  animation: flash-correct-demo 1.6s ease; position: relative;
+}
+.correction-demo-line.corrected::after {
+  content: '已修正'; font-size: 9px; background: var(--gold-dim); color: var(--gold);
+  border: 1px solid var(--gold); border-radius: 3px; padding: 1px 5px;
+  margin-left: 8px; vertical-align: middle;
+}
+.correction-demo-log {
+  margin-top: 14px; padding-top: 12px; border-top: 1px solid #222;
+  font-family: var(--mono); font-size: 12px; color: #555; line-height: 1.8;
+  min-height: 20px;
+}
+.correction-demo-log span { display: block; opacity: 0; animation: fadeInLog 0.3s forwards; }
+@keyframes fadeInLog { to { opacity: 1; } }
+.cd-green { color: var(--green); }
+.cd-gold { color: var(--gold); }
+.cd-red { color: #e88; }
+
 /* ==================== Correction Pipeline ==================== */
 .correction-pipeline {
   display: flex; flex-direction: column; gap: 0; max-width: 900px; width: 100%;
