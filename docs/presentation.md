@@ -159,7 +159,203 @@
 
 ---
 
-## 二、面试官可能问的问题 + 回答
+## 二、功能实现详解（每个功能怎么做、为什么这样做）
+
+### 1. 实时语音识别（双路 ASR 并行）
+
+**怎么做的：**
+- 浏览器端：`new SpeechRecognition()` 设置 `continuous: true, interimResults: true`，`onresult` 回调里区分 `isFinal` 和 interim，interim 发 `asr_interim` 消息让服务端回传 `asr_partial`（显示灰色文字），final 发 `asr_final` 触发翻译
+- 服务端：`StreamingASR` 类接收 PCM 二进制帧，内部 VAD 状态机检测语音端点后切分音频块，拼 WAV 头调用 Whisper/SenseVoice API 识别，返回 `asr_partial`（committed + pending）和 `asr_final`
+- 两路独立运行，浏览器 ASR 负责字幕实时显示（~0ms 延迟），服务端 ASR 负责准确识别 + 翻译触发
+
+**为什么这样做：**
+- 单用服务端 ASR 延迟太高（VAD 端点 0.6s + 网络 + 识别 ≈ 1.5s），用户说话后很久才出字
+- 单用浏览器 ASR 不够——不支持标签页音频、不支持文件、Firefox/Safari 兼容差
+- 双路互补：浏览器提供即时感知，服务端提供准确性和兼容性
+
+### 2. VAD 端点检测（语音活动检测）
+
+**怎么做的：**
+- 每帧 PCM 计算 RMS 能量：`sumSq += int16[i]²`，`rms = sqrt(sumSq / length)`
+- 双阈值状态机：`silence` 状态下连续语音超过 `vadSpeechOnset`（0.15s）进入 `speech`；`speech` 状态下连续静音超过 `vadEndpointSamples`（实时 0.6s / 文件 1.0s）触发端点
+- 端点触发后立即处理缓冲区音频，同时重置状态机
+
+**为什么这样做：**
+- Whisper 不是流式模型，需要一段完整音频才能识别，VAD 负责在句子自然停顿处切分
+- `vadSpeechOnset` 防抖：避免瞬间噪声（键盘声、咳嗽）误触发
+- 实时 / 文件模式用不同参数：实时要快（0.6s），文件不怕等（1.0s 避免切断长停顿）
+- 30 行代码零依赖，比 Silero VAD（需 ONNX Runtime 2MB）轻量得多
+
+### 3. LocalAgreement-2 字幕稳定算法
+
+**怎么做的：**
+- `commit.js` 维护 `committed[]`（已定稿词）和 `prevHypothesis[]`（上一次 ASR 假设）
+- `update(words)`: 从 `committed.length` 位置开始，逐词比较 `words[i]` 和 `prevHypothesis[i]`（normalize 后小写去标点），一致则 commit，不一致则停止
+- `flush(words)`: 句子结束时强制把剩余假设全部定稿
+- 前端 committed 显示白色，pending 显示灰色
+
+**为什么这样做：**
+- 直接显示 ASR interim → 字幕疯狂跳动（用户无法阅读）
+- 直接等 final → 延迟太高（整句说完才显示）
+- LA-2 是折中：只有连续两次假设一致的前缀才定稿，既能尽快出字，又保证已显示的不会变
+- 来自 whisper_streaming 论文，是流式同传的经典做法
+
+### 4. 流式翻译 + 上下文窗口
+
+**怎么做的：**
+- `RollingTranslator` 类维护 `history[]` 和 `glossary` Map（30 条术语）
+- 翻译时取最近 8 句 `history.slice(-contextSize)` 构建 Prompt，注入术语表和用户反馈
+- LLM 返回结构化 JSON：`{target, corrections[], terms[]}`
+- 流式输出时逐 chunk 拼接，用 Regex `/"target"\s*:\s*"((?:[^"\\]|\\.)*)"/` 实时提取 target 字段，通过 `onPartial` 回调发送 `translation_partial` 给前端
+- 完整 JSON 解析后提取 corrections 发送 `correction` 消息，提取 terms 更新术语表
+
+**为什么这样做：**
+- 8 句窗口是实验平衡点：更多 → prompt 太长影响速度，更少 → 上下文不够消歧
+- 结构化 JSON 一次调用同时拿到译文、纠正、术语——比纯文本 + 后处理效率高
+- Regex 提取不完整 JSON：不等完整响应，约 10 字符就开始显示，体感延迟极低
+- 术语表 FIFO 淘汰保持 30 条上限，避免 prompt 膨胀
+
+### 5. 自动纠正（corrections 回溯修正）
+
+**怎么做的：**
+- System Prompt 要求 LLM：如果根据当前句发现前句译文有误，在 `corrections` 数组中指出 `{id, target}`
+- 服务端解析后对每个 correction 发送 `{type: 'correction', id, target}` 消息
+- 前端 `renderTarget()` 接收后：替换对应 id 的译文文本，添加 `.flash-correct` 类触发黄色闪烁动画，插入「已修正」标签
+- 修正后的译文同步更新 `history[]`，影响后续翻译的上下文
+
+**为什么这样做：**
+- 同传的本质问题：翻译时后文还没出来，前文可能翻错（如 "bank" 在金融/地理语境下不同）
+- 传统 NMT（如 Google Translate）是无状态的，翻完就不管了
+- LLM + 滑动窗口能"回看"前文并修正，是 LLM 翻译独有的优势
+- 视觉反馈（黄色闪烁 + 标签）让用户知道哪句被改了，不会困惑
+
+### 6. 声音克隆 TTS
+
+**怎么做的：**
+- 前端：`collectVoiceSample()` 在 ScriptProcessor 的 `onaudioprocess` 中逐帧收集 PCM16，满 80000 样本（5s@16kHz）后发送——先发 JSON `{type: 'voice_sample', sampleRate: 16000}`，再发 `sample.buffer` 二进制
+- 服务端：`setVoiceReference()` 先同步清除 `pendingVoiceSample` 标志，然后异步处理——`pcm16ToWav()` 手动拼 44 字节 WAV 头 → Base64 data URI → 调 `transcribeWav()` 获取 transcript → 存入 `sessionVoiceRefs` Map
+- 合成时：`synthesize()` 调用 `splitLongText()` 按标点拆分（≤50 字符），只合成第一段。如果有 voiceRef，用 `references: [{audio, text}]` 数组调用 CosyVoice2；克隆失败则降级为预设音色
+- 前端播放：收到 `tts_audio` JSON 后等下一帧二进制 → `new Blob() → new Audio().play()`，播放期间 `pauseRecognitionDuring()` 暂停 ASR + 静音 PCM 防回声
+
+**为什么这样做：**
+- 5 秒采集时长：多次实验的平衡——太短（1-2s）克隆效果差，太长用户等太久
+- JSON + Binary 两帧模式：声纹是一次性大二进制数据 + 元信息，比 Base64 塞 JSON 高效
+- 只合成第一段：同传场景用户持续说话，等全文合成（可能 200 字 → 5-6s）延迟不可接受，第一段（≤50 字 → ~1s）包含最关键信息
+- 三层回声防护：单靠 `echoCancellation` 对合成语音效果差，必须在应用层暂停识别 + 静音
+
+### 7. 多 Provider 统一抽象
+
+**怎么做的：**
+- `providers.js` 的 `PRESETS` 对象：每个 provider 配置 `{baseUrl, model}`，`getLLMConfig()` 从环境变量读取 provider 名后选配置
+- 翻译函数 `translateLLM()` 用统一的 `fetch(url + '/chat/completions', {model, messages, stream})` 调用，所有 provider 都遵循 OpenAI Chat API 格式
+- ASR 同理：`ASR_PRESETS` 配置 3 个引擎（siliconflow/groq/openai），`transcribeWav()` 用统一的 multipart/form-data 调 `/audio/transcriptions`
+- TTS 同理：`TTS_PRESETS` 配 2 个引擎，`synthesize()` 调统一的 `/audio/speech`
+- 每个服务只需 3 个环境变量：`XXX_PROVIDER` + `XXX_API_KEY` + 可选 `XXX_BASE_URL`
+
+**为什么这样做：**
+- 成本控制：DeepSeek ¥1/百万 token vs GPT-4o ¥20/百万，开发测试用免费额度
+- 容灾降级：服务端 ASR 挂了 → 浏览器 Web Speech API，CosyVoice 挂了 → 预设音色 → speechSynthesis
+- 场景适配：SenseVoice 支持 50+ 语言自动检测，DeepSeek 日韩翻译更好
+- 加新 provider 只需在 PRESETS 里加 3 行配置，零代码改动
+
+### 8. 五种输入模式
+
+**麦克风实时（核心模式）：**
+- `getUserMedia({audio: {echoCancellation, noiseSuppression, autoGainControl}})` → `AudioContext` → `ScriptProcessor`（4096 buffer）→ `downsampleToPCM16()` 降到 16kHz → `ws.send(pcm16.buffer)` 二进制帧
+- 同时启动 Web Speech API + 频谱可视化
+
+**文件上传：**
+- `POST /upload` 上传文件 → 服务端 `convertToPCM()` 用 FFmpeg `-ac 1 -ar 16000 -f s16le` 转码 → 返回 PCM Buffer
+- 前端切成 0.5s 块（8000 samples），`setInterval(100ms)` 逐块 `ws.send()` 模拟实时流
+- 视频文件自动创建 `<video>` 播放器，字幕通过 `segTimestamps` 与播放进度同步
+
+**标签页捕获：**
+- `getDisplayMedia({video: true, audio: true})` → 停掉视频轨 → `AudioContext` 重采样 → WebSocket
+- 先 `openPiPSubtitles()` 创建浮窗（需 user gesture），再 getDisplayMedia
+- 标签页音频不走 Web Speech API（它只能识别麦克风），完全依赖服务端 ASR
+
+**在线视频 URL：**
+- 前端发 `{type: 'start_url', url}` → 服务端 `streamUrlAudio()` 启动 yt-dlp 管道 → FFmpeg 转码 → `pcmStream.on('data')` 逐块喂入 ASR
+- yt-dlp stdout → FFmpeg stdin 管道直连，零中间文件
+
+**OBS 字幕叠加：**
+- `overlay.html` 是只读 WebSocket 客户端，发 `{type: 'start', mode: 'overlay'}`
+- 服务端把它加入 `overlayClients` Set，每次 asr_final / translation / correction 都 `broadcastToOverlays()`
+- 透明背景 CSS，在 OBS 里作为浏览器源叠加
+
+**为什么 5 种模式：**
+- 覆盖所有使用场景：会议/上课（麦克风）、已有录音（文件）、在线课程（标签页）、YouTube（URL）、直播（OBS）
+- 复用同一套服务端 ASR + 翻译管线，只是音频输入源不同
+
+### 9. 画中画悬浮字幕（Document PiP）
+
+**怎么做的：**
+- `documentPictureInPicture.requestWindow({width:500, height:180})` 获取独立浮窗
+- 向新 window 注入自定义 CSS（暗色背景、字体大小）+ DOM（`#pipSource` + `#pipTarget`）
+- 每收到 WebSocket 消息（asr_partial/asr_final/translation_partial/translation/correction），都调 `updatePiPSubtitles(source, target)` 通过 `pipWindow.document.getElementById()` 更新文本
+- 不支持 Document PiP 的浏览器（Firefox/Safari）降级为 `window.open()` 普通弹窗
+
+**为什么这样做：**
+- 标签页捕获模式下，用户在看视频，字幕窗口需要始终置顶不被遮挡
+- Document PiP 是 Chrome 116+ 的 API，创建的窗口自动 always-on-top
+- 降级方案保证功能可用，只是失去"置顶"能力
+
+### 10. 音频频谱可视化
+
+**怎么做的：**
+- `AudioContext.createAnalyser()` 设 `fftSize: 256`（128 个频率 bin），`smoothingTimeConstant: 0.75`
+- `requestAnimationFrame` 循环：`analyser.getByteFrequencyData()` 取频率数据 → Canvas 绘制 64 根竖条
+- 每根竖条高度 = `dataArr[i] / 255 * h * 0.9`，opacity = `0.3 + val * 0.7`（静音时半透明，语音时亮）
+- DPI 适配：`canvas.width = clientWidth * devicePixelRatio`
+
+**为什么这样做：**
+- 给用户直观反馈"系统正在收听"，避免"是不是卡了"的困惑
+- AnalyserNode 是 Web Audio API 原生节点，零额外依赖，CPU 开销极低
+- Canvas 比 DOM 方案性能好（64 根竖条每帧更新，DOM 操作太重）
+
+### 11. WebSocket 二进制协议
+
+**怎么做的：**
+- 普通控制消息：`ws.send(JSON.stringify({type, ...}))` → text frame
+- PCM 音频：`ws.send(pcm16.buffer)` → binary frame，服务端 `ws.on('message', (data, isBinary))` 的 `isBinary` 区分
+- 声纹/TTS 音频：JSON 头 + Binary 两帧模式——先发 JSON `{type: 'voice_sample'/'tts_audio'}`，服务端设 `pendingVoiceSample` 标志位，下一帧二进制即为对应数据
+- 标志位**必须同步清除**（在 async 操作之前）：`pendingVoiceSample = null; setVoiceReference(...)`
+
+**为什么这样做：**
+- PCM16 每秒 32KB，JSON + Base64 膨胀 33% + 每帧 JSON.parse 开销
+- WebSocket 原生区分 text/binary frame，零额外编码
+- 两帧模式比 Base64 塞 JSON 高效，且元信息（采样率、格式）可扩展
+- 同步清除标志位：避免 ASR 转录期间后续音频帧被误判为声纹
+
+### 12. 字幕渲染与交互
+
+**怎么做的：**
+- `renderSource(id, committed, pending, isFinal)`: 每个 segment 创建一个 `.line` div，内含 `.committed` span（白色）+ `.pending` span（灰色），用 Map 管理
+- `renderTarget(id, text, isCorrection, isPartial)`: 类似结构，isPartial 时添加半透明样式，isCorrection 时触发 `.flash-correct` 动画 + 插入「已修正」标签
+- 双击编辑：`startEditSource()` 隐藏 span → 显示 input → blur/Enter 时发 `retranslate` 消息
+- 翻译反馈：每行译文附带 👎 按钮，点击发 `{type: 'feedback', id}`，服务端 `addFeedback()` 保存最近 3 条注入后续 Prompt
+- 视频模式字幕同步：`segTimestamps` Map 存每段的 start/end 时间，video 的 `timeupdate` 事件里隐藏已过字幕
+
+**为什么这样做：**
+- 直接 DOM 操作（不用 React）：字幕更新就是 `textContent` 赋值，Map 查找 O(1)，Virtual DOM diff 在这里完全没有价值
+- committed + pending 双 span：视觉上区分"已确认"和"还在变"的文字，用户一眼能看出来
+- 反馈机制形成闭环：用户标记 → 注入 Prompt → LLM 改进后续翻译
+
+### 13. 语言检测与方向自动修正
+
+**怎么做的：**
+- `detectLang(text)`: 遍历文本字符，统计 Unicode 码点落在哪个范围——CJK `0x4E00-0x9FFF`（中文）、平假名片假名 `0x3040-0x30FF`（日文）、韩文音节 `0xAC00-0xD7AF`（韩文）、Latin `0x41-0x7A`（英文）
+- 特殊处理：日文混用汉字——如果检测到平假名/片假名，汉字也归为日文（`if (ja > 0) ja += zh, zh = 0`）
+- `autoCorrectDirection(detected, currentDir)`: 检测语言与源语言不符时自动切换方向，如 en2zh 但说日语 → ja2zh
+
+**为什么这样做：**
+- 用户可能选错方向，或者多语言混说
+- 纯统计方法零延迟零依赖，不需要额外的语言检测模型
+- 日文特殊处理解决了 CJK 汉字在中/日文间的歧义
+
+---
+
+## 三、面试官可能问的问题 + 回答
 
 ### 1. 架构与设计
 
@@ -420,3 +616,59 @@
 > 最大的一次返工是 **ASR 架构从单路改为双路**。最初只用服务端 Whisper ASR，体验上有明显的延迟感——用户说完一句话要等 1-2 秒才看到文字。后来加入浏览器 Web Speech API 做实时字幕显示，服务端 ASR 负责准确识别和翻译触发，两路并行互补。这次改动涉及前后端协议调整、字幕渲染逻辑重写（要合并两路结果）、以及 LocalAgreement-2 算法的引入。
 >
 > 另一次是 **TTS 从全文合成改为拆段合成**。早期等整句翻译完再合成，延迟 5-6 秒，同传体验很差。改成按标点拆分、只合成第一段（≤50 字符），延迟降到 2.5-3 秒。代价是后半段译文没有语音播报，但同传场景下用户持续在说话，TTS 本来就跟不上全文。
+
+---
+
+## 五、参考资料与工具链接
+
+### 核心 API / 模型
+
+| 工具 / API | 用途 | 链接 | 说明 |
+|------------|------|------|------|
+| Web Speech API | 浏览器端实时 ASR | https://developer.mozilla.org/en-US/docs/Web/API/SpeechRecognition | Chrome/Edge 原生支持，`continuous` + `interimResults` 实现逐词输出 |
+| SenseVoice (SiliconFlow) | 服务端 ASR | https://docs.siliconflow.cn/api-reference/audio/create-transcription | FunAudioLLM/SenseVoiceSmall，支持 50+ 语言自动检测，免费额度 |
+| Whisper (Groq) | 服务端 ASR 备选 | https://console.groq.com/docs/speech-text | whisper-large-v3，免费快速 |
+| DeepSeek Chat | LLM 翻译 | https://platform.deepseek.com/api-docs | deepseek-chat，¥1/百万 token，OpenAI 兼容格式 |
+| CosyVoice2 (SiliconFlow) | TTS + 声音克隆 | https://docs.siliconflow.cn/api-reference/audio/create-speech | `references` 数组传参克隆，需同时提供 audio data URI + text transcript |
+| Document PiP API | 画中画浮窗 | https://developer.chrome.com/docs/web-platform/document-picture-in-picture | Chrome 116+，`documentPictureInPicture.requestWindow()` |
+| getDisplayMedia | 标签页音频捕获 | https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getDisplayMedia | `{audio: true}` 捕获标签页音频，仅 Chromium |
+| Web Audio API | 频谱 / 重采样 | https://developer.mozilla.org/en-US/docs/Web/API/Web_Audio_API | AnalyserNode（FFT）、ScriptProcessorNode（PCM 采集）、AudioContext |
+
+### 算法 / 论文
+
+| 参考 | 说明 | 链接 |
+|------|------|------|
+| whisper_streaming | LocalAgreement-2 字幕稳定算法来源 | https://github.com/ufal/whisper_streaming |
+| Whisper 论文 | OpenAI Whisper ASR 模型 | https://arxiv.org/abs/2212.04356 |
+| CosyVoice 论文 | 声音克隆 TTS 模型 | https://arxiv.org/abs/2407.05407 |
+
+### 开发工具
+
+| 工具 | 用途 | 链接 |
+|------|------|------|
+| FFmpeg | 音视频转码（任意格式 → 16kHz PCM16 单声道） | https://ffmpeg.org/ |
+| yt-dlp | 在线视频音频提取（支持 1000+ 网站） | https://github.com/yt-dlp/yt-dlp |
+| ws (npm) | Node.js WebSocket 服务端 | https://github.com/websockets/ws |
+| dotenv (npm) | 环境变量加载 | https://github.com/motdotla/dotenv |
+
+### 备选 LLM Provider
+
+| Provider | 链接 | 模型 | 特点 |
+|----------|------|------|------|
+| DeepSeek | https://platform.deepseek.com | deepseek-chat | 性价比最高，日韩翻译好 |
+| 通义千问 | https://dashscope.console.aliyun.com | qwen-plus | 阿里云，中文理解强 |
+| Kimi (Moonshot) | https://platform.moonshot.cn | moonshot-v1-8k | 长上下文 |
+| OpenAI | https://platform.openai.com | gpt-4o-mini | 英文翻译质量最高，价格较贵 |
+| 智谱 AI | https://open.bigmodel.cn | glm-4-flash | 免费额度大 |
+| SiliconFlow | https://cloud.siliconflow.cn | 多种开源模型 | 统一 API 访问多个开源 LLM |
+
+### 浏览器兼容性速查
+
+| 功能 | Chrome | Firefox | Safari | Edge |
+|------|--------|---------|--------|------|
+| Web Speech API (interim) | ✅ | ⚠️ 无 interim | ⚠️ 不稳定 | ✅ |
+| getUserMedia | ✅ | ✅ | ✅ | ✅ |
+| getDisplayMedia (audio) | ✅ | ❌ 不支持音频 | ❌ | ✅ |
+| Document PiP | ✅ 116+ | ❌ | ❌ | ✅ 116+ |
+| AudioContext / AnalyserNode | ✅ | ✅ | ✅ | ✅ |
+| WebSocket binary | ✅ | ✅ | ✅ | ✅ |
