@@ -163,7 +163,17 @@
 
 ### 1. 实时语音识别（双路 ASR 并行）
 
+**代码位置：**
+- 浏览器端 ASR：`web/app.js:563-616` — `startBrowserASR()` 启动 Web Speech API
+- 服务端 StreamingASR 类：`server/asr.js:146-398` — 完整的流式 ASR 会话管理
+- ASR 引擎配置：`server/asr.js:32-57` — `ASR_PRESETS` + `getASRConfig()`
+- Whisper API 调用：`server/asr.js:75-142` — `transcribeWav()` multipart/form-data 构建
+- 服务端创建 ASR 实例：`server/server.js:227-242` — 根据模式选择 server/browser ASR
+
 **怎么做的：**
+
+> 通俗来说：同时开两条路做语音识别。一条是浏览器自带的语音识别（像手机语音输入法一样，说一个字就出一个字，速度极快但偶尔不准）；另一条是把录音发到服务器，用更强大的 AI 模型识别（更准但要等一会儿）。用户看到的字幕来自浏览器那条路（实时感强），翻译用的是服务器那条路（准确度高）。两条路同时跑，取长补短。
+
 - 浏览器端：`new SpeechRecognition()` 设置 `continuous: true, interimResults: true`，`onresult` 回调里区分 `isFinal` 和 interim，interim 发 `asr_interim` 消息让服务端回传 `asr_partial`（显示灰色文字），final 发 `asr_final` 触发翻译
 - 服务端：`StreamingASR` 类接收 PCM 二进制帧，内部 VAD 状态机检测语音端点后切分音频块，拼 WAV 头调用 Whisper/SenseVoice API 识别，返回 `asr_partial`（committed + pending）和 `asr_final`
 - 两路独立运行，浏览器 ASR 负责字幕实时显示（~0ms 延迟），服务端 ASR 负责准确识别 + 翻译触发
@@ -175,7 +185,16 @@
 
 ### 2. VAD 端点检测（语音活动检测）
 
+**代码位置：**
+- VAD 参数定义：`server/asr.js:167-175` — 阈值、端点时长、语音起始防抖
+- VAD 状态机：`server/asr.js:224-257` — `pushAudio()` 中的 silence/speech 双状态切换
+- RMS 能量计算：`server/asr.js:204-209` — PCM16 样本平方和 → 均方根
+- 端点触发处理：`server/asr.js:243-254` — 静音超时后切分并送 ASR
+
 **怎么做的：**
+
+> 通俗来说：系统不断"听"麦克风的音量大小。如果声音大（有人在说话），就开始录音；如果声音变小（说话停顿了），就等一小会儿（0.6 秒），确认是真的停了而不是喘口气，然后把这段录音剪下来送去识别。就像一个智能录音笔，自动帮你按"一句话说完了"来断句。为了防止咳嗽、键盘敲击等突发噪声被当成说话，还加了一个"至少连续说 0.15 秒才算开始说话"的门槛。
+
 - 每帧 PCM 计算 RMS 能量：`sumSq += int16[i]²`，`rms = sqrt(sumSq / length)`
 - 双阈值状态机：`silence` 状态下连续语音超过 `vadSpeechOnset`（0.15s）进入 `speech`；`speech` 状态下连续静音超过 `vadEndpointSamples`（实时 0.6s / 文件 1.0s）触发端点
 - 端点触发后立即处理缓冲区音频，同时重置状态机
@@ -188,7 +207,15 @@
 
 ### 3. LocalAgreement-2 字幕稳定算法
 
+**代码位置：**
+- 完整算法实现：`server/commit.js:11-57` — `LocalAgreement` 类（update / flush / reset）
+- 词归一化函数：`server/commit.js:59-61` — `normalize()` 小写 + 去标点
+- 前端 committed/pending 渲染：`web/app.js:207-238` — `renderSource()` 白色/灰色双 span
+
 **怎么做的：**
+
+> 通俗来说：语音识别器在你说话的过程中会反复"改主意"——比如你说"我今天"，它先猜"我经"，再猜"我今天"，猜来猜去字幕就会跳来跳去。这个算法的办法是：**只有连续两次猜的结果前几个词一样，才把这些词"钉死"显示出来**，后面还没确定的词用灰色显示。就像老师批改作业，同一个答案写了两遍才给打勾。这样用户看到白色字就不会再变了，灰色字还在"思考中"。
+
 - `commit.js` 维护 `committed[]`（已定稿词）和 `prevHypothesis[]`（上一次 ASR 假设）
 - `update(words)`: 从 `committed.length` 位置开始，逐词比较 `words[i]` 和 `prevHypothesis[i]`（normalize 后小写去标点），一致则 commit，不一致则停止
 - `flush(words)`: 句子结束时强制把剩余假设全部定稿
@@ -202,7 +229,20 @@
 
 ### 4. 流式翻译 + 上下文窗口
 
+**代码位置：**
+- RollingTranslator 类：`server/providers.js:361-401` — 历史窗口、术语表、反馈管理
+- translateLLM 核心函数：`server/providers.js:403-501` — fetch + SSE 流式读取
+- 流式 Regex 提取 target：`server/providers.js:467-476` — 不完整 JSON 中实时匹配
+- Prompt 构建：`server/providers.js:325-357` — `buildUserPrompt()` 术语 + 反馈 + 上下文
+- 12 方向 System Prompt：`server/providers.js:97-307` — `SYSTEM_PROMPTS` 对象
+- 术语表 FIFO 淘汰：`server/providers.js:383-388` — glossary Map 上限 30 条
+
 **怎么做的：**
+
+> 通俗来说：每翻译一句话，都把前面 8 句的原文和译文一起"喂"给 AI，让它知道上下文是什么。就像同传译员翻译时脑子里记着前面说了什么一样。AI 翻译的同时还会自动记录术语（比如"Transformer"翻译成什么），下次遇到同样的词就保持一致。
+>
+> 更巧妙的是"边翻边显"：AI 一个字一个字地输出翻译结果，系统不等它说完，用正则表达式从半成品的输出中"偷看"已经生成的部分，立刻显示给用户。就像考试时答案还没写完，但已经能看到前几行了。
+
 - `RollingTranslator` 类维护 `history[]` 和 `glossary` Map（30 条术语）
 - 翻译时取最近 8 句 `history.slice(-contextSize)` 构建 Prompt，注入术语表和用户反馈
 - LLM 返回结构化 JSON：`{target, corrections[], terms[]}`
@@ -217,7 +257,16 @@
 
 ### 5. 自动纠正（corrections 回溯修正）
 
+**代码位置：**
+- Prompt 中 corrections 要求：`server/providers.js:104-116` — System Prompt JSON 格式定义
+- 服务端解析并广播：`server/server.js:175-179` — `translateAndEmit()` 中遍历 corrections
+- 前端修正渲染：`web/app.js:336-345` — `renderTarget()` 黄色闪烁 + 「已修正」标签
+- corrections 回写历史：`server/providers.js:374` — 更新 history 影响后续翻译上下文
+
 **怎么做的：**
+
+> 通俗来说：AI 每翻译一句新话，都会"回头看看"前面翻得对不对。如果发现之前翻错了（比如新信息让前面的歧义消除了），就会告诉系统"第 3 句应该改成 XXX"。系统收到后自动把对应那行译文换掉，还会闪一下黄色提醒用户"这句被改过了"。改完的译文也会更新到记忆里，这样后续翻译时 AI 看到的上下文就是修正过的版本。
+
 - System Prompt 要求 LLM：如果根据当前句发现前句译文有误，在 `corrections` 数组中指出 `{id, target}`
 - 服务端解析后对每个 correction 发送 `{type: 'correction', id, target}` 消息
 - 前端 `renderTarget()` 接收后：替换对应 id 的译文文本，添加 `.flash-correct` 类触发黄色闪烁动画，插入「已修正」标签
@@ -231,7 +280,23 @@
 
 ### 6. 声音克隆 TTS
 
+**代码位置：**
+- 前端声纹采集：`web/app.js:401-433` — `collectVoiceSample()` 逐帧收集 PCM16
+- 前端发送两帧：`web/app.js:425-427` — JSON 头 + ArrayBuffer 二进制
+- 服务端声纹处理：`server/tts.js:73-94` — `setVoiceReference()` WAV 编码 + ASR 转录
+- PCM16 → WAV 编码：`server/tts.js:43-68` — `pcm16ToWav()` 手动拼 44 字节头
+- 合成入口：`server/tts.js:119-136` — `synthesize()` 拆段 + 选择克隆/预设
+- 克隆合成：`server/tts.js:171-209` — `synthesizeWithClone()` references 数组调用
+- 长句拆分：`server/tts.js:101-117` — `splitLongText()` 按标点切分 ≤50 字符
+- 前端音频播放：`web/app.js:505-512` — `playAudioBuffer()` Blob → Audio
+- 回声防护：`web/app.js:486-503` — `pauseRecognitionDuring()` 暂停 ASR + 静音
+
 **怎么做的：**
+
+> 通俗来说：系统偷偷录你说话的前 5 秒当作"声音样本"，发给服务器。服务器把这段录音转成音频文件格式，同时用语音识别得到你说了什么字（克隆接口需要知道音频对应的文字）。之后每次要朗读翻译结果时，就把你的声音样本和要朗读的文字一起发给声音克隆 AI，它就能用你的声音来念翻译。
+>
+> 为了让用户不用等太久，长句子会按标点拆开，只念第一段（≤50 字）。播放时还会暂停录音，防止系统把自己念的话又录进去形成"套娃"。如果克隆失败就自动切换成普通机器人声音，保证不卡住。
+
 - 前端：`collectVoiceSample()` 在 ScriptProcessor 的 `onaudioprocess` 中逐帧收集 PCM16，满 80000 样本（5s@16kHz）后发送——先发 JSON `{type: 'voice_sample', sampleRate: 16000}`，再发 `sample.buffer` 二进制
 - 服务端：`setVoiceReference()` 先同步清除 `pendingVoiceSample` 标志，然后异步处理——`pcm16ToWav()` 手动拼 44 字节 WAV 头 → Base64 data URI → 调 `transcribeWav()` 获取 transcript → 存入 `sessionVoiceRefs` Map
 - 合成时：`synthesize()` 调用 `splitLongText()` 按标点拆分（≤50 字符），只合成第一段。如果有 voiceRef，用 `references: [{audio, text}]` 数组调用 CosyVoice2；克隆失败则降级为预设音色
@@ -245,7 +310,18 @@
 
 ### 7. 多 Provider 统一抽象
 
+**代码位置：**
+- LLM Provider 预设：`server/providers.js:14-35` — `PRESETS` 对象（5+1 个提供商）
+- LLM 配置读取：`server/providers.js:37-46` — `getLLMConfig()` 环境变量 → 配置
+- ASR Provider 预设：`server/asr.js:33-46` — `ASR_PRESETS`（3 个引擎）
+- TTS Provider 预设：`server/tts.js:13-24` — `TTS_PRESETS`（2 个引擎）
+- 统一 API 调用：`server/providers.js:411-430` — fetch OpenAI 兼容格式
+- 降级判断：`server/server.js:244-246` — `asrMode` server/browser 选择
+
 **怎么做的：**
+
+> 通俗来说：所有 AI 服务商（不管是 DeepSeek、通义千问还是 OpenAI）都长得差不多——调用地址不同，但请求格式一样（都兼容 OpenAI 格式）。所以系统只要维护一个"通讯录"，每个服务商存好地址和模型名，切换时改一个环境变量就行，代码完全不用动。就像换手机卡一样，手机（代码）不变，插哪张卡（服务商）就用哪家的网络。ASR 和 TTS 也是同样的思路。
+
 - `providers.js` 的 `PRESETS` 对象：每个 provider 配置 `{baseUrl, model}`，`getLLMConfig()` 从环境变量读取 provider 名后选配置
 - 翻译函数 `translateLLM()` 用统一的 `fetch(url + '/chat/completions', {model, messages, stream})` 调用，所有 provider 都遵循 OpenAI Chat API 格式
 - ASR 同理：`ASR_PRESETS` 配置 3 个引擎（siliconflow/groq/openai），`transcribeWav()` 用统一的 multipart/form-data 调 `/audio/transcriptions`
@@ -259,6 +335,30 @@
 - 加新 provider 只需在 PRESETS 里加 3 行配置，零代码改动
 
 ### 8. 五种输入模式
+
+**代码位置：**
+- 麦克风采集：`web/app.js:777-823` — `startCapture()` getUserMedia + AudioContext + ScriptProcessor
+- 文件上传前端：`web/app.js:828-931` — `startFileUpload()` POST /upload + 分块发送
+- 文件上传服务端：`server/server.js:75-91` — `convertToPCM()` FFmpeg 转码
+- 文件上传 HTTP 接口：`server/server.js:97-119` — POST /upload 处理
+- 标签页捕获：`web/app.js:680-746` — `startTabAudioCapture()` getDisplayMedia
+- 在线视频 URL 前端：`web/app.js:749-764` — `startUrlTranslation()`
+- 在线视频 URL 服务端：`server/server.js:30-72` — `streamUrlAudio()` yt-dlp + FFmpeg 管道
+- URL 模式消息处理：`server/server.js:294-356` — start_url case
+- OBS overlay 广播：`server/server.js:136-142` — `broadcastToOverlays()`
+- OBS overlay 注册：`server/server.js:211-215` — overlay mode 处理
+- overlay 页面：`web/overlay.html` — 只读 WebSocket 客户端
+
+**怎么做的：**
+
+> 通俗来说：五种模式的音频来源不同，但最终都变成同一种格式（16kHz 单声道 PCM）喂给同一套识别+翻译管线：
+> - **麦克风**：直接录你的声音
+> - **文件上传**：把音视频文件用 FFmpeg 转码后，假装成"实时录音"一小段一小段地发
+> - **标签页捕获**：录下你正在看的网页（比如 YouTube）的声音
+> - **在线视频 URL**：服务器帮你下载视频音频，直接在服务器上处理
+> - **OBS 字幕**：一个透明背景的网页，只显示字幕，可以叠加到直播画面上
+>
+> 就像五根不同的水管，最终都接到同一个水龙头（ASR + 翻译）。
 
 **麦克风实时（核心模式）：**
 - `getUserMedia({audio: {echoCancellation, noiseSuppression, autoGainControl}})` → `AudioContext` → `ScriptProcessor`（4096 buffer）→ `downsampleToPCM16()` 降到 16kHz → `ws.send(pcm16.buffer)` 二进制帧
@@ -289,7 +389,15 @@
 
 ### 9. 画中画悬浮字幕（Document PiP）
 
+**代码位置：**
+- PiP 窗口创建：`web/app.js:619-660` — `openPiPSubtitles()` Document PiP + 降级弹窗
+- PiP 字幕更新：`web/app.js:662-677` — `updatePiPSubtitles()` 跨窗口 DOM 操作
+- PiP 调用时机：`web/app.js:686` — 标签页捕获前先开 PiP（需 user gesture）
+
 **怎么做的：**
+
+> 通俗来说：用浏览器的"画中画"功能弹出一个小窗口，这个小窗口会始终悬浮在所有窗口上面。往里面塞两行字——上面显示原文，下面显示译文，每收到新的翻译就更新文字。这样你在看视频/上网课的时候，字幕小窗口一直浮在画面上，不会被挡住。如果浏览器不支持这个功能，就退而求其次用普通弹窗代替。
+
 - `documentPictureInPicture.requestWindow({width:500, height:180})` 获取独立浮窗
 - 向新 window 注入自定义 CSS（暗色背景、字体大小）+ DOM（`#pipSource` + `#pipTarget`）
 - 每收到 WebSocket 消息（asr_partial/asr_final/translation_partial/translation/correction），都调 `updatePiPSubtitles(source, target)` 通过 `pipWindow.document.getElementById()` 更新文本
@@ -302,7 +410,16 @@
 
 ### 10. 音频频谱可视化
 
+**代码位置：**
+- 频谱绘制：`web/app.js:515-544` — `setupSpectrum()` AnalyserNode + Canvas 60fps
+- 停止频谱：`web/app.js:546-548` — `stopSpectrum()` cancelAnimationFrame
+- AnalyserNode 创建：`web/app.js:798-801` — fftSize=256, smoothing=0.75
+- 降采样函数：`web/app.js:551-560` — `downsampleToPCM16()` Float32 → Int16
+
 **怎么做的：**
+
+> 通俗来说：浏览器自带一个"频率分析器"，能把声音拆成不同频率的分量（低音、中音、高音）。系统每秒 60 次读取这些频率数据，在 Canvas 画布上画成 64 根上下跳动的竖条——声音大的频率竖条就高，没声音就矮。效果就像 KTV 里的音乐频谱动画。这样用户一看就知道"麦克风在工作，系统在听"。
+
 - `AudioContext.createAnalyser()` 设 `fftSize: 256`（128 个频率 bin），`smoothingTimeConstant: 0.75`
 - `requestAnimationFrame` 循环：`analyser.getByteFrequencyData()` 取频率数据 → Canvas 绘制 64 根竖条
 - 每根竖条高度 = `dataArr[i] / 255 * h * 0.9`，opacity = `0.3 + val * 0.7`（静音时半透明，语音时亮）
@@ -315,7 +432,18 @@
 
 ### 11. WebSocket 二进制协议
 
+**代码位置：**
+- 服务端消息分发：`server/server.js:191-371` — `ws.on('message')` isBinary + switch-case
+- pendingVoiceSample 标志位：`server/server.js:150` — 定义；`server/server.js:194-198` — 同步清除
+- 服务端 TTS 音频发送：`server/server.js:183-188` — JSON 头 + 二进制两帧
+- 前端 WebSocket 连接：`web/app.js:86-129` — `connectWS()` 重连 + 二进制接收
+- 前端消息处理：`web/app.js:131-197` — `handleMessage()` switch 分发
+- 前端 TTS 二进制接收：`web/app.js:119-124` — pendingTTSAudio 匹配
+
 **怎么做的：**
+
+> 通俗来说：浏览器和服务器之间有一根"管子"（WebSocket），里面同时传两种东西——文字指令（JSON）和音频数据（二进制）。管子自动区分这两种，不会搞混。但有个特殊情况：声纹样本也是二进制音频，系统怎么区分它和普通录音呢？办法是先发一条文字消息说"注意！下一帧是声纹"，服务器记住这个"预告"，下一帧二进制来了就知道是声纹而不是普通录音。预告用完必须立刻清除，否则后面的普通录音也会被误当成声纹。
+
 - 普通控制消息：`ws.send(JSON.stringify({type, ...}))` → text frame
 - PCM 音频：`ws.send(pcm16.buffer)` → binary frame，服务端 `ws.on('message', (data, isBinary))` 的 `isBinary` 区分
 - 声纹/TTS 音频：JSON 头 + Binary 两帧模式——先发 JSON `{type: 'voice_sample'/'tts_audio'}`，服务端设 `pendingVoiceSample` 标志位，下一帧二进制即为对应数据
@@ -329,7 +457,23 @@
 
 ### 12. 字幕渲染与交互
 
+**代码位置：**
+- 原文渲染：`web/app.js:207-238` — `renderSource()` committed/pending 双 span + 说话人标记
+- 译文渲染：`web/app.js:295-347` — `renderTarget()` 修正闪烁 + partial 半透明
+- 双击编辑：`web/app.js:240-285` — `startEditSource()` input → retranslate
+- 翻译反馈按钮：`web/app.js:317-331` — 👎 按钮 → feedback 消息
+- 服务端反馈处理：`server/server.js:287-292` — `addFeedback()` 保存最近 3 条
+- 视频字幕同步：`web/app.js:936-974` — `syncSubtitlesWithVideo()` 时间戳匹配
+- 轮播/滚动：`web/app.js:349-371` — `carouselShowAround()` + `carouselUpdate()`
+- 会话持久化：`web/app.js:977-1027` — `saveSession()` / `restoreSession()` localStorage
+- SRT 导出：`web/app.js:1089-1151` — `exportSRT()` 双语/原文/译文三种模式
+
 **怎么做的：**
+
+> 通俗来说：屏幕分左右两栏，左边显示原文，右边显示译文，一句对一句。每句字幕分两种颜色：白色是"确定了的"，灰色是"还在变的"。翻译正在生成时会半透明显示，生成完变成实色。如果 AI 回头修正了某句译文，那一行会闪一下黄色并标上"已修正"。
+>
+> 用户可以双击原文进行编辑（改错了的识别结果），改完自动重新翻译。每行译文旁边有个👎按钮，点了之后系统会记住这句翻得不好，后续翻类似的内容时 AI 会注意改进。字幕还能导出为 SRT 字幕文件，支持双语/纯原文/纯译文三种格式。
+
 - `renderSource(id, committed, pending, isFinal)`: 每个 segment 创建一个 `.line` div，内含 `.committed` span（白色）+ `.pending` span（灰色），用 Map 管理
 - `renderTarget(id, text, isCorrection, isPartial)`: 类似结构，isPartial 时添加半透明样式，isCorrection 时触发 `.flash-correct` 动画 + 插入「已修正」标签
 - 双击编辑：`startEditSource()` 隐藏 span → 显示 input → blur/Enter 时发 `retranslate` 消息
@@ -343,7 +487,18 @@
 
 ### 13. 语言检测与方向自动修正
 
+**代码位置：**
+- Unicode 语言检测：`server/providers.js:54-76` — `detectLang()` CJK/假名/韩文/Latin 码点统计
+- 方向自动修正：`server/providers.js:84-93` — `autoCorrectDirection()` 源语言不符时切换
+- 调用位置：`server/server.js:161-165` — `translateAndEmit()` 中检测并修正方向
+- 前端语言配置：`web/app.js:40-53` — `LANG_CONFIG` 12 个方向的 ASR 语言 + 标签
+
 **怎么做的：**
+
+> 通俗来说：每种语言的文字在电脑里有不同的编码范围——中文汉字、日文假名、韩文音节、英文字母各有各的"门牌号"。系统数一数这句话里哪种文字最多，就知道是什么语言了。比如发现句子里有很多假名，就判定是日语。
+>
+> 有个特殊情况：日语也用汉字（比如"東京"），所以如果发现句子里同时有假名和汉字，就把汉字也算到日语头上。检测完之后，如果发现用户选的翻译方向不对（比如选了英译中但说的是日语），系统自动切换到日译中，不需要用户手动改。
+
 - `detectLang(text)`: 遍历文本字符，统计 Unicode 码点落在哪个范围——CJK `0x4E00-0x9FFF`（中文）、平假名片假名 `0x3040-0x30FF`（日文）、韩文音节 `0xAC00-0xD7AF`（韩文）、Latin `0x41-0x7A`（英文）
 - 特殊处理：日文混用汉字——如果检测到平假名/片假名，汉字也归为日文（`if (ja > 0) ja += zh, zh = 0`）
 - `autoCorrectDirection(detected, currentDir)`: 检测语言与源语言不符时自动切换方向，如 en2zh 但说日语 → ja2zh
