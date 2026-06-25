@@ -139,6 +139,29 @@
       <path class="pipe-line" d="M130,75 Q160,110 235,110 Q500,110 720,110 L750,90" stroke="#d4a020" stroke-width="1" fill="none" stroke-dasharray="4,3" style="animation-delay:1.3s"/>
       <polygon class="pipe-node" points="746,90 754,90 750,82" fill="#d4a020" style="animation-delay:1.3s"/>
       <text x="440" y="106" text-anchor="middle" fill="#d4a020" font-size="10" font-family="sans-serif" class="pipe-node" style="animation-delay:1.3s">前 5s 声纹采样 → 声音克隆 references[]</text>
+
+      <!-- ===== Glow filter ===== -->
+      <defs>
+        <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="3" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+      </defs>
+
+      <!-- ===== Glow overlay lines: top + bottom per node (JS-driven) ===== -->
+      <g id="glowOverlays">
+        <!-- Main row: each node = 2 lines (top edge, bottom edge) -->
+        <g data-glow="0"><line x1="10" y1="30" x2="130" y2="30" stroke="#50c878" stroke-width="2.5" pathLength="100" stroke-dasharray="30 70" stroke-dashoffset="100" opacity="0" filter="url(#glow)" stroke-linecap="round"/><line x1="10" y1="90" x2="130" y2="90" stroke="#50c878" stroke-width="2.5" pathLength="100" stroke-dasharray="30 70" stroke-dashoffset="100" opacity="0" filter="url(#glow)" stroke-linecap="round"/></g>
+        <g data-glow="1"><line x1="175" y1="30" x2="295" y2="30" stroke="#50c878" stroke-width="2.5" pathLength="100" stroke-dasharray="30 70" stroke-dashoffset="100" opacity="0" filter="url(#glow)" stroke-linecap="round"/><line x1="175" y1="90" x2="295" y2="90" stroke="#50c878" stroke-width="2.5" pathLength="100" stroke-dasharray="30 70" stroke-dashoffset="100" opacity="0" filter="url(#glow)" stroke-linecap="round"/></g>
+        <g data-glow="2"><line x1="340" y1="30" x2="470" y2="30" stroke="#d4a020" stroke-width="2.5" pathLength="100" stroke-dasharray="30 70" stroke-dashoffset="100" opacity="0" filter="url(#glow)" stroke-linecap="round"/><line x1="340" y1="90" x2="470" y2="90" stroke="#d4a020" stroke-width="2.5" pathLength="100" stroke-dasharray="30 70" stroke-dashoffset="100" opacity="0" filter="url(#glow)" stroke-linecap="round"/></g>
+        <g data-glow="3"><line x1="515" y1="30" x2="645" y2="30" stroke="#d4a020" stroke-width="2.5" pathLength="100" stroke-dasharray="30 70" stroke-dashoffset="100" opacity="0" filter="url(#glow)" stroke-linecap="round"/><line x1="515" y1="90" x2="645" y2="90" stroke="#d4a020" stroke-width="2.5" pathLength="100" stroke-dasharray="30 70" stroke-dashoffset="100" opacity="0" filter="url(#glow)" stroke-linecap="round"/></g>
+        <g data-glow="4"><line x1="690" y1="30" x2="810" y2="30" stroke="#d4a020" stroke-width="2.5" pathLength="100" stroke-dasharray="30 70" stroke-dashoffset="100" opacity="0" filter="url(#glow)" stroke-linecap="round"/><line x1="690" y1="90" x2="810" y2="90" stroke="#d4a020" stroke-width="2.5" pathLength="100" stroke-dasharray="30 70" stroke-dashoffset="100" opacity="0" filter="url(#glow)" stroke-linecap="round"/></g>
+        <g data-glow="5"><line x1="855" y1="30" x2="950" y2="30" stroke="#50c878" stroke-width="2.5" pathLength="100" stroke-dasharray="30 70" stroke-dashoffset="100" opacity="0" filter="url(#glow)" stroke-linecap="round"/><line x1="855" y1="90" x2="950" y2="90" stroke="#50c878" stroke-width="2.5" pathLength="100" stroke-dasharray="30 70" stroke-dashoffset="100" opacity="0" filter="url(#glow)" stroke-linecap="round"/></g>
+        <!-- Browser ASR row -->
+        <g data-glow="r0"><line x1="10" y1="130" x2="130" y2="130" stroke="#50c878" stroke-width="2" pathLength="100" stroke-dasharray="30 70" stroke-dashoffset="100" opacity="0" filter="url(#glow)" stroke-linecap="round"/><line x1="10" y1="180" x2="130" y2="180" stroke="#50c878" stroke-width="2" pathLength="100" stroke-dasharray="30 70" stroke-dashoffset="100" opacity="0" filter="url(#glow)" stroke-linecap="round"/></g>
+        <g data-glow="r1"><line x1="175" y1="130" x2="295" y2="130" stroke="#50c878" stroke-width="2" pathLength="100" stroke-dasharray="30 70" stroke-dashoffset="100" opacity="0" filter="url(#glow)" stroke-linecap="round"/><line x1="175" y1="180" x2="295" y2="180" stroke="#50c878" stroke-width="2" pathLength="100" stroke-dasharray="30 70" stroke-dashoffset="100" opacity="0" filter="url(#glow)" stroke-linecap="round"/></g>
+        <g data-glow="r2"><line x1="340" y1="130" x2="470" y2="130" stroke="#50c878" stroke-width="2" pathLength="100" stroke-dasharray="30 70" stroke-dashoffset="100" opacity="0" filter="url(#glow)" stroke-linecap="round"/><line x1="340" y1="180" x2="470" y2="180" stroke="#50c878" stroke-width="2" pathLength="100" stroke-dasharray="30 70" stroke-dashoffset="100" opacity="0" filter="url(#glow)" stroke-linecap="round"/></g>
+      </g>
     </svg>
   </div>
 
@@ -1460,8 +1483,8 @@ ws.send(int16Array.buffer);</pre>
 <!-- ==================== 14. CTA ==================== -->
 <section id="cta">
   <h2 class="section-title reveal">试一试</h2>
-  <p class="section-subtitle reveal">启动服务后，点击按钮进入 Live Demo</p>
-  <a class="cta-btn reveal" href="/" id="demo-link">打开 Live Demo</a>
+  <p class="section-subtitle reveal">观看完整功能演示视频</p>
+  <a class="cta-btn reveal" href="https://www.bilibili.com/video/BV1MEEt6zEKa/?vd_source=4dedea1db20af9b788febfb457df5625" target="_blank" id="demo-link">观看 Live Demo</a>
   <div class="cta-links reveal">
     <a href="https://github.com/kakiuwang-ui/Simultaneous-Interpretation" target="_blank">GitHub</a>
     <a href="https://www.bilibili.com/video/BV1MEEt6zEKa/?vd_source=4dedea1db20af9b788febfb457df5625" target="_blank">Bilibili 演示视频</a>
@@ -1470,9 +1493,7 @@ ws.send(int16Array.buffer);</pre>
 
 <!-- ==================== JavaScript ==================== -->
 <script>
-const DEMO_URL = '/';
-
-document.getElementById('demo-link').href = DEMO_URL;
+// Live Demo 按钮的链接已直接写在 HTML 中（指向 Bilibili 演示视频），无需在此覆盖
 
 // ---- Typewriter ----
 const phrases = [
@@ -1706,6 +1727,70 @@ document.querySelectorAll('.tradeoff-card').forEach(card => {
   });
 })();
 
+// ---- Pipeline Glow Sequence ----
+(function initPipelineGlow() {
+  const mainIds = ['0','1','2','3','4','5'];
+  const browIds = ['r0','r1','r2'];
+
+  // Each group (g[data-glow]) contains 2 lines (top + bottom)
+  const mainGroups = mainIds.map(id => document.querySelector(`[data-glow="${id}"]`));
+  const browGroups = browIds.map(id => document.querySelector(`[data-glow="${id}"]`));
+  if (!mainGroups[0]) return;
+
+  const SWEEP = 800;    // ms for light to cross one node
+  const GAP = 100;       // ms between nodes
+  const PAUSE = 1500;    // ms after full cycle
+
+  function sweepNode(g) {
+    if (!g) return;
+    const lines = g.querySelectorAll('line');
+    lines.forEach(l => {
+      l.style.transition = 'none';
+      l.style.strokeDashoffset = '130';
+      l.style.opacity = '0.9';
+      l.getBoundingClientRect();
+      l.style.transition = `stroke-dashoffset ${SWEEP}ms linear, opacity 300ms ease`;
+      l.style.strokeDashoffset = '-30';
+    });
+  }
+
+  function fadeOut(g) {
+    if (!g) return;
+    g.querySelectorAll('line').forEach(l => {
+      l.style.opacity = '0';
+    });
+  }
+
+  function runCycle() {
+    let t = 0;
+
+    // Main row: sequential
+    mainGroups.forEach(g => {
+      setTimeout(() => sweepNode(g), t);
+      setTimeout(() => fadeOut(g), t + SWEEP);
+      t += SWEEP + GAP;
+    });
+
+    // Browser row: parallel, offset 200ms after main row starts
+    let t2 = 200;
+    browGroups.forEach(g => {
+      setTimeout(() => sweepNode(g), t2);
+      setTimeout(() => fadeOut(g), t2 + SWEEP);
+      t2 += SWEEP + GAP;
+    });
+
+    // Repeat after full cycle
+    const cycleTime = t + PAUSE;
+    setTimeout(runCycle, cycleTime);
+  }
+
+  // Start when arch section visible
+  const obs = new IntersectionObserver((entries) => {
+    if (entries[0].isIntersecting) { obs.disconnect(); runCycle(); }
+  }, { threshold: 0.3 });
+  obs.observe(document.getElementById('arch'));
+})();
+
 // ---- Correction Demo ----
 (function initCorrectionDemo() {
   const srcEl = document.getElementById('cdSrc');
@@ -1792,8 +1877,7 @@ document.querySelectorAll('.tradeoff-card').forEach(card => {
       cumulative += delay;
       timers.push(setTimeout(fn, cumulative));
     });
-    // auto-replay after pause
-    timers.push(setTimeout(run, cumulative + 4000));
+    // 不自动重播，用户点"重播"按钮手动触发
   }
 
   // Start when section is visible
